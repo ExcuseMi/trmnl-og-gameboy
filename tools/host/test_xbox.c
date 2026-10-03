@@ -42,7 +42,7 @@ int main(void)
     uint8_t withid[17] = { 1 };
     memcpy(withid + 1, am, 16);
     CHECK(gb(withid, 17) == (0x01 | 0x08 | 0x40));
-    CHECK(!xbox_parse(am, 15, &r) && !xbox_parse(am, 18, &r));
+    CHECK(xbox_parse(am, 15, &r) && !r.share && xbox_parse(am, 18, &r) && !xbox_parse(am, 14, &r));
     /* all eight hat directions */
     static const uint8_t want[9] = { 0, 0x40, 0x50, 0x10, 0x90, 0x80, 0xa0, 0x20, 0x60 };
     for (int h = 0; h <= 8; h++) {

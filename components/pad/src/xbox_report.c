@@ -11,7 +11,8 @@ bool xbox_parse(const uint8_t *d, size_t n, xbox_report_t *r)
         d++;
         n--;
     }
-    if (n != XBOX_REPORT_LEN) return false;
+    /* 16 bytes with the share byte (firmware 5.x); 15 without it. Longer: extra bytes ignored. */
+    if (n < XBOX_REPORT_LEN - 1) return false;
     r->lx = u16(d);
     r->ly = u16(d + 2);
     r->rx = u16(d + 4);
@@ -20,7 +21,7 @@ bool xbox_parse(const uint8_t *d, size_t n, xbox_report_t *r)
     r->rt = u16(d + 10) & 0x3ff;
     r->hat = d[12] & 0x0f;
     r->buttons = u16(d + 13) & 0x7fff;
-    r->share = d[15] & 1;
+    r->share = n >= XBOX_REPORT_LEN ? d[15] & 1 : 0;
     return true;
 }
 

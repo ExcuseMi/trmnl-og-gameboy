@@ -33,6 +33,8 @@ static const char *volatile g_state = "off";
 static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
 static volatile uint32_t n_link, n_rescan;
+static volatile uint32_t n_notif;
+static volatile unsigned g_len; /* length of the last notification */
 static volatile int g_disc; /* reason of the last disconnect */
 
 static int gap_event(struct ble_gap_event *ev, void *arg);
@@ -197,10 +199,21 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         forget(ev->repeat_pairing.conn_handle);
         return BLE_GAP_REPEAT_PAIRING_RETRY;
     case BLE_GAP_EVENT_NOTIFY_RX: {
-        uint8_t d[XBOX_REPORT_LEN + 1];
-        uint16_t n = 0;
+        uint8_t d[32];
+        uint16_t n = OS_MBUF_PKTLEN(ev->notify_rx.om);
         xbox_report_t r;
-        if (ble_hs_mbuf_to_flat(ev->notify_rx.om, d, sizeof d, &n) || !xbox_parse(d, n, &r)) return 0;
+        if (n > sizeof d) n = sizeof d;
+        if (os_mbuf_copydata(ev->notify_rx.om, 0, n, d)) return 0;
+        n_notif++;
+        g_len = n;
+        bool ok = xbox_parse(d, n, &r);
+        /* the first reports raw, and later ones the parser refuses now and then: the format is checked on hardware */
+        if (n_notif <= 4 || (!ok && n_notif % 200 == 0)) {
+            printf("pad raw handle=%u len=%u ok=%d", ev->notify_rx.attr_handle, n, ok);
+            for (int i = 0; i < n; i++) printf(" %02x", d[i]);
+            printf("\n");
+        }
+        if (!ok) return 0;
         uint8_t b = xbox_to_gb(&r);
         if (b != g_buttons) {
             g_buttons = b;
@@ -290,7 +303,7 @@ bool pad_connected(void) { return g_connected; }
  * advert the pending connect and the scan are cancelled and the scan starts again. */
 const char *pad_state(void)
 {
-    static char text[64];
+    static char text[96];
     static uint32_t seen;
     static int still;
     const char *st = g_state;
@@ -307,7 +320,8 @@ const char *pad_state(void)
         still = 0;
     }
     seen = n_adv;
-    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u", st, (unsigned)n_link, g_disc, (unsigned)n_rescan);
+    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u notif=%u len=%u", st, (unsigned)n_link, g_disc,
+             (unsigned)n_rescan, (unsigned)n_notif, g_len);
     return text;
 }
 void pad_counts(uint32_t *adv, uint32_t *pads, int *err)
