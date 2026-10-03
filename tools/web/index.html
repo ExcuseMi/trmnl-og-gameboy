@@ -21,8 +21,8 @@
 </head>
 <body>
 <h1>TRMNL OG Game Boy</h1>
-<p>Connect the TRMNL OG with a USB cable. <span id="nousb" class="warn" hidden>This browser has no Web Serial: use
-Chrome or Edge on a computer.</span></p>
+<p>Connect the TRMNL OG with a USB cable. <span id="nousb" class="warn" hidden>This browser cannot reach USB devices:
+use Chrome or Edge on a computer, or Chrome on an Android phone with a USB data cable (no iPhone).</span></p>
 
 <section>
   <b>1. Firmware</b> <small id="fwinfo"></small>
@@ -50,7 +50,15 @@ const log = (s) => { $("log").textContent += s; $("log").scrollTop = $("log").sc
 const terminal = { clean() {}, writeLine: (s) => log(s + "\n"), write: (s) => log(s) };
 let offsets = null, hosted = false;
 
-if (!("serial" in navigator)) $("nousb").hidden = false;
+/* Web Serial on a computer; on Android Chrome (no Web Serial) the same API over WebUSB. */
+let serial = navigator.serial || null;
+if (!serial && "usb" in navigator) {
+  try {
+    serial = (await import("https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js")).serial;
+    log("Phone mode: USB access through WebUSB.\n");
+  } catch (e) { log("WebUSB helper did not load: " + (e.message || e) + "\n"); }
+}
+if (!serial) $("nousb").hidden = false;
 
 async function init() {
   try {
@@ -77,7 +85,8 @@ function romProblem(size) {
 window.romProblem = romProblem;
 
 async function write(data, address, what) {
-  const port = await navigator.serial.requestPort();
+  if (!serial) throw new Error("this browser cannot reach USB devices");
+  const port = await serial.requestPort();
   const transport = new Transport(port, true);
   try {
     const loader = new ESPLoader({ transport, baudrate: 460800, terminal });
