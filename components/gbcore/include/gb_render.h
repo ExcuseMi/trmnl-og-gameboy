@@ -18,7 +18,9 @@
 void gb_fb_clear(uint8_t *fb);
 /* Draw Game Boy line `ly` (160 shades 0 = white .. 3 = black) as three panel rows. */
 void gb_render_line(uint8_t *fb, const uint8_t *shades, unsigned ly);
-/* Bounding box of the differences between a and b inside the game area, x and w multiples of 8.
- * False if equal. */
-bool gb_fb_diff(const uint8_t *a, const uint8_t *b, tiny_rect_t *out);
+#define GB_ROWS (144 * GB_SCALE)
+/* Row hashes of the game area (GB_ROWS entries) stand in for a copy of the frame the panel shows. */
+void gb_fb_hash(uint32_t *hash, const uint8_t *fb);
+/* Rows of the game area whose hash differs from `hash` (updated) as one full-width box. False if none. */
+bool gb_fb_diff(uint32_t *hash, const uint8_t *fb, tiny_rect_t *out);
 #endif

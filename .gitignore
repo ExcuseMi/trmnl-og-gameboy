@@ -7,3 +7,5 @@ sdkconfig.old
 .claude/
 tools/host/gb_host
 .venv/
+build-qemu/
+build-qemu.log

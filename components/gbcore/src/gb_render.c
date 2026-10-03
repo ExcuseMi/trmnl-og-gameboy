@@ -26,27 +26,32 @@ void gb_render_line(uint8_t *fb, const uint8_t *shades, unsigned ly)
     }
 }
 
-bool gb_fb_diff(const uint8_t *a, const uint8_t *b, tiny_rect_t *out)
+static uint32_t row_hash(const uint8_t *p)
 {
-    int y0 = -1, y1 = 0, x0 = GB_STRIDE, x1 = -1;
-    for (unsigned y = GB_Y0; y < GB_Y0 + 144 * GB_SCALE; y++) {
-        const uint8_t *pa = a + y * GB_STRIDE, *pb = b + y * GB_STRIDE;
-        int f = -1, l = -1;
-        for (unsigned i = GB_X0 / 8; i < (GB_X0 + 160 * GB_SCALE) / 8; i++)
-            if (pa[i] != pb[i]) {
-                if (f < 0) f = (int)i;
-                l = (int)i;
-            }
-        if (f < 0) continue;
-        if (y0 < 0) y0 = (int)y;
-        y1 = (int)y;
-        if (f < x0) x0 = f;
-        if (l > x1) x1 = l;
+    uint32_t h = 2166136261u; /* FNV-1a over the game area of one row */
+    for (unsigned i = GB_X0 / 8; i < (GB_X0 + 160 * GB_SCALE) / 8; i++) h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+
+void gb_fb_hash(uint32_t *hash, const uint8_t *fb)
+{
+    for (unsigned i = 0; i < GB_ROWS; i++) hash[i] = row_hash(fb + (GB_Y0 + i) * GB_STRIDE);
+}
+
+bool gb_fb_diff(uint32_t *hash, const uint8_t *fb, tiny_rect_t *out)
+{
+    int y0 = -1, y1 = 0;
+    for (unsigned i = 0; i < GB_ROWS; i++) {
+        uint32_t h = row_hash(fb + (GB_Y0 + i) * GB_STRIDE);
+        if (h == hash[i]) continue;
+        hash[i] = h;
+        if (y0 < 0) y0 = (int)i;
+        y1 = (int)i;
     }
     if (y0 < 0) return false;
-    out->x = (int16_t)(x0 * 8);
-    out->y = (int16_t)y0;
-    out->w = (uint16_t)((x1 - x0 + 1) * 8);
+    out->x = GB_X0;
+    out->y = (int16_t)(GB_Y0 + y0);
+    out->w = 160 * GB_SCALE;
     out->h = (uint16_t)(y1 - y0 + 1);
     return true;
 }

@@ -17,15 +17,25 @@
 
 #define FRAME_US 16742 /* 1e6 / 59.7275 */
 
+#ifdef CONFIG_GB_NO_PANEL
+#define NO_PANEL 1
+#else
+#define NO_PANEL 0
+#endif
+
 enum { PANEL_BUSY, FRAME_WANTED, FRAME_READY };
 
 static uint8_t fb[GB_FB_SIZE];   /* written by the emulator while FRAME_WANTED, read by the panel task at FRAME_READY */
-static uint8_t last[GB_FB_SIZE]; /* what the panel shows */
+static uint32_t rows[GB_ROWS];   /* hashes of the rows the panel shows (the controller RAM holds the old plane) */
 static volatile int state = PANEL_BUSY;
 static volatile uint32_t n_emu, n_panel, partial_ms;
 
 static int push(bool full, const tiny_rect_t *r)
 {
+    if (NO_PANEL) { /* QEMU: no panel, a refresh takes a second */
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        return 0;
+    }
     int64_t t0 = esp_timer_get_time();
     int rc = epd_begin(full ? EPD_FULL : EPD_PARTIAL);
     if (!rc) {
@@ -34,7 +44,7 @@ static int push(bool full, const tiny_rect_t *r)
             rc = epd_write(&all, NULL, fb, GB_STRIDE);
         } else {
             size_t off = (size_t)r->y * GB_STRIDE + r->x / 8;
-            rc = epd_write(r, last + off, fb + off, GB_STRIDE);
+            rc = epd_write(r, NULL, fb + off, GB_STRIDE);
         }
     }
     if (!rc) rc = epd_refresh();
@@ -53,7 +63,7 @@ static void panel_task(void *arg)
     epd_variant_t variant = EPD_GDEY075T7;
 #endif
     epd_cfg_t cfg = { .variant = variant, .part_wave = EPD_PART_OTP, .window_refresh = true };
-    if (epd_open(&pins, &cfg)) {
+    if (!NO_PANEL && epd_open(&pins, &cfg)) {
         printf("gb error=epd_open\n");
         vTaskDelete(NULL);
     }
@@ -64,17 +74,18 @@ static void panel_task(void *arg)
         while (state != FRAME_READY) vTaskDelay(1);
         tiny_rect_t r;
         bool full = first || partials >= CONFIG_GB_FULL_EVERY;
-        if (!full && !gb_fb_diff(last, fb, &r)) continue;
+        if (!full && !gb_fb_diff(rows, fb, &r)) continue;
         state = PANEL_BUSY;
         int rc = push(full, &r);
-        if (rc) printf("gb error=push rc=%d\n", rc);
+        if (rc) {
+            printf("gb error=push rc=%d\n", rc);
+            partials = CONFIG_GB_FULL_EVERY; /* controller RAM unknown: full refresh next */
+        }
         if (full) {
-            memcpy(last, fb, sizeof last);
+            gb_fb_hash(rows, fb);
             partials = 0;
             first = false;
         } else {
-            for (int y = r.y; y < r.y + r.h; y++)
-                memcpy(last + (size_t)y * GB_STRIDE + r.x / 8, fb + (size_t)y * GB_STRIDE + r.x / 8, r.w / 8);
             partials++;
         }
         n_panel++;
@@ -120,7 +131,6 @@ void app_main(void)
         return;
     }
     gb_fb_clear(fb);
-    memset(last, 0, sizeof last); /* never equal to a frame: the first push is a full refresh anyway */
     int rc = gb_core_init(rom, p->size, fb);
     if (rc) {
         for (;;) {

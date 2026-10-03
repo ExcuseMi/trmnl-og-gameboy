@@ -9,4 +9,7 @@ menu "Game Boy"
     config GB_START_HOLD_MS
         int "Hold the button this long for Start"
         default 1000
+    config GB_NO_PANEL
+        bool "No panel attached (QEMU, tools/qemu.sh): skip the panel driver, a refresh takes 1 s"
+        default n
 endmenu
