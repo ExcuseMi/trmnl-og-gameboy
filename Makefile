@@ -5,9 +5,10 @@ IDF := tools/idf/idf.sh
 setup:
 	$(IDF) setup
 
-# build/dist/gameboy-merged.bin (write at 0x0)
+# build/dist/gameboy-merged.bin (write at 0x0). GB_SHADE_MODE=bayer (default) or threshold
+GB_SHADE_MODE ?= bayer
 build:
-	$(IDF) tools/idf/build.sh
+	$(IDF) tools/idf/build.sh $(GB_SHADE_MODE)
 
 flash-image: build
 	@ls -l build/dist/gameboy-merged.bin

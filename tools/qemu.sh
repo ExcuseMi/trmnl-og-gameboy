@@ -17,4 +17,4 @@ read -r -a OPTS < <(head -n1 flash_args)
 python -m esptool --chip esp32c3 merge_bin --fill-flash-size 4MB -o qemu.bin "${OPTS[@]}" \
     $(tail -n +2 flash_args | sort -g | tr '\n' ' ') "$ROMOFF" "$ROM" >/dev/null)
 timeout "$SECS" qemu-system-riscv32 -nographic -M esp32c3 -m 4M -drive file=$B/qemu.bin,if=mtd,format=raw \
-    -global driver=timer.esp32c3.timg,property=wdt_disable,value=true || true
+    -global driver=timer.esp32c3.timg,property=wdt_disable,value=true | cat || true

@@ -1,5 +1,6 @@
 /* Host check: run a ROM for N frames with the same core and dither as the firmware, write PNG snapshots.
  *   gb_host <rom.gb> <prefix> [frames=600] [snapshot frames...]   (default 60 300 600)
+ * The pairing hint is drawn under the picture, as on the panel without a controller.
  * Presses START for frames 100..110 to leave a title screen. PNG: 800x480, 1-bit gray, stored deflate.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdio.h>
@@ -81,6 +82,7 @@ int main(int argc, char **argv)
     int rc = gb_core_init(rom, n, fb);
     if (rc) { fprintf(stderr, "gb_core_init: %d\n", rc); return 1; }
     printf("title '%s', %zu bytes\n", gb_core_title(), n);
+    gb_fb_line(fb, "Hold the pair button on the controller", NULL);
     gb_core_set_render(true);
     for (int fr = 1; fr <= frames; fr++) {
         gb_core_frame(fr >= 100 && fr < 110 ? 0x08 : 0);

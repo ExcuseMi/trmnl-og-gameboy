@@ -11,3 +11,4 @@ build-qemu/
 build-qemu.log
 tools/host/test_save
 tools/host/test_xbox
+tools/host/gb_host_threshold

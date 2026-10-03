@@ -4,7 +4,16 @@
 
 static const uint8_t bayer4[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
 /* White fraction per shade (x/16): white, light, dark, black. A pixel is white when level > threshold. */
+#ifndef GB_SHADE_MODE
+#define GB_SHADE_MODE 0
+#endif
+#if GB_SHADE_MODE == 1
+static const uint8_t level[4] = { 16, 16, 0, 0 };
+const char *gb_shade_name(void) { return "threshold"; }
+#else
 static const uint8_t level[4] = { 16, 10, 5, 0 };
+const char *gb_shade_name(void) { return "bayer"; }
+#endif
 
 void gb_fb_clear(uint8_t *fb) { memset(fb, 0xff, GB_FB_SIZE); }
 
@@ -22,6 +31,41 @@ void gb_render_line(uint8_t *fb, const uint8_t *shades, unsigned ly)
                 v = (uint8_t)(v << 1 | (level[shades[gx] & 3] > th[x & 3]));
             }
             row[b] = v;
+        }
+    }
+}
+
+/* 5x7 glyphs, one byte per row, bit 4 = left column. Drawn at 2x. */
+static const struct { char c; uint8_t rows[7]; } glyphs[] = {
+    { 'H', { 0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 } }, { 'a', { 0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f } },
+    { 'b', { 0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1e } }, { 'c', { 0x00, 0x00, 0x0e, 0x10, 0x10, 0x11, 0x0e } },
+    { 'd', { 0x01, 0x01, 0x0d, 0x13, 0x11, 0x11, 0x0f } }, { 'e', { 0x00, 0x00, 0x0e, 0x11, 0x1f, 0x10, 0x0e } },
+    { 'h', { 0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11 } }, { 'i', { 0x04, 0x00, 0x0c, 0x04, 0x04, 0x04, 0x0e } },
+    { 'l', { 0x0c, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e } }, { 'n', { 0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11 } },
+    { 'o', { 0x00, 0x00, 0x0e, 0x11, 0x11, 0x11, 0x0e } }, { 'p', { 0x00, 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10 } },
+    { 'r', { 0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10 } }, { 't', { 0x08, 0x08, 0x1c, 0x08, 0x08, 0x09, 0x06 } },
+    { 'u', { 0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0d } },
+};
+
+void gb_fb_line(uint8_t *fb, const char *text, tiny_rect_t *out)
+{
+    const unsigned w = 160 * GB_SCALE;
+    for (unsigned y = GB_LINE_Y; y < GB_LINE_Y + GB_LINE_H; y++) memset(fb + y * GB_STRIDE + GB_X0 / 8, 0xff, w / 8);
+    if (out) *out = (tiny_rect_t){ GB_X0, GB_LINE_Y, (uint16_t)w, GB_LINE_H };
+    if (!text) return;
+    size_t len = strlen(text);
+    if (len * 12 > w) len = w / 12;
+    unsigned x0 = GB_X0 + (w - (unsigned)len * 12) / 2;
+    for (size_t n = 0; n < len; n++, x0 += 12) {
+        for (unsigned g = 0; g < sizeof glyphs / sizeof glyphs[0]; g++) {
+            if (glyphs[g].c != text[n]) continue;
+            for (unsigned py = 0; py < 14; py++)
+                for (unsigned px = 0; px < 10; px++)
+                    if (glyphs[g].rows[py / 2] >> (4 - px / 2) & 1) {
+                        unsigned x = x0 + px;
+                        fb[(GB_LINE_Y + 1 + py) * GB_STRIDE + x / 8] &= (uint8_t)~(0x80 >> (x & 7));
+                    }
+            break;
         }
     }
 }

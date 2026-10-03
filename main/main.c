@@ -1,5 +1,6 @@
 /* Game Boy on the TRMNL OG e-paper: emulator task paced at 59.7 Hz, panel task pushing changed rows as fast as the
- * panel allows. Log line each second: gb fps_emu=.. fps_panel=.. partial_ms=.. full_every=..
+ * panel allows. Log line each second: gb fps_emu=.. fps_panel=.. partial_ms=.. full_every=.. heap_free=.. heap_min=..
+ * Without a connected gamepad a hint line stands under the picture.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +15,7 @@
 #include "gb_input.h"
 #include "gb_render.h"
 #include "gb_save.h"
+#include "pad.h"
 #include "save_flash.h"
 #include "sdkconfig.h"
 
@@ -23,6 +25,11 @@
 #define NO_PANEL 1
 #else
 #define NO_PANEL 0
+#endif
+#ifdef CONFIG_GB_PAD_BLE
+#define PAD_BLE 1
+#else
+#define PAD_BLE 0
 #endif
 
 enum { PANEL_BUSY, FRAME_WANTED, FRAME_READY };
@@ -70,8 +77,19 @@ static void panel_task(void *arg)
         vTaskDelete(NULL);
     }
     int partials = 0;
-    bool first = true;
+    bool first = true, hint = false;
     for (;;) {
+        /* rows under the picture: the emulator never draws there, so this task may */
+        bool want = PAD_BLE && !pad_connected();
+        if (want != hint) {
+            tiny_rect_t lr;
+            hint = want;
+            gb_fb_line(fb, hint ? "Hold the pair button on the controller" : NULL, &lr);
+            if (!first && partials < CONFIG_GB_FULL_EVERY) {
+                if (push(false, &lr)) partials = CONFIG_GB_FULL_EVERY;
+                else partials++;
+            }
+        }
         state = FRAME_WANTED;
         while (state != FRAME_READY) vTaskDelay(1);
         tiny_rect_t r;
@@ -130,8 +148,10 @@ static void emu_task(void *arg)
         }
         now = esp_timer_get_time();
         if (now - stat >= 1000000) {
-            printf("gb fps_emu=%u fps_panel=%u partial_ms=%u full_every=%d\n", (unsigned)(n_emu - last_emu),
-                   (unsigned)(n_panel - last_panel), (unsigned)partial_ms, CONFIG_GB_FULL_EVERY);
+            printf("gb fps_emu=%u fps_panel=%u partial_ms=%u full_every=%d heap_free=%u heap_min=%u\n",
+                   (unsigned)(n_emu - last_emu), (unsigned)(n_panel - last_panel), (unsigned)partial_ms,
+                   CONFIG_GB_FULL_EVERY, (unsigned)esp_get_free_heap_size(),
+                   (unsigned)esp_get_minimum_free_heap_size());
             last_emu = n_emu;
             last_panel = n_panel;
             stat += 1000000;
@@ -156,7 +176,8 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(5000));
         }
     }
-    printf("gb rom='%s' heap_free=%u\n", gb_core_title(), (unsigned)esp_get_free_heap_size());
+    printf("gb rom='%s' shade=%s heap_free=%u\n", gb_core_title(), gb_shade_name(),
+           (unsigned)esp_get_free_heap_size());
     gb_input_init();
     xTaskCreate(panel_task, "panel", 4096, NULL, 6, NULL);
     xTaskCreate(emu_task, "emu", 8192, NULL, 5, NULL);
