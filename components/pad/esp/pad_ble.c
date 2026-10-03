@@ -5,6 +5,7 @@
 #include "pad.h"
 #include <stdio.h>
 #include <string.h>
+#include "esp_bt.h"
 #include "esp_timer.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -229,6 +230,11 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
                peer.val[1], peer.val[0]);
         hid_start = hid_end = 0;
         n_link++;
+        {
+            int8_t rssi = 0;
+            ble_gap_conn_rssi(ev->connect.conn_handle, &rssi);
+            printf("pad rssi=%d\n", rssi);
+        }
         g_state = "pair";
         rc = ble_gap_security_initiate(ev->connect.conn_handle);
         if (rc) give_up(ev->connect.conn_handle, "security", rc);
@@ -328,6 +334,7 @@ void pad_init(void)
         e = nvs_flash_init();
     }
     if (!e) e = nimble_port_init();
+    if (!e) esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9); /* +9 dBm, as the working Xbox hosts */
     if (e) {
         g_err = (int)e;
         printf("pad error=init rc=%d\n", (int)e);
@@ -362,15 +369,11 @@ const char *pad_state(void)
         else if (++still >= 5) {
             still = 0;
             n_rescan++;
-            if (++quiet >= 3) { /* restarts did not help: reset host and controller, on_sync scans again */
-                quiet = 0;
-                n_reset++;
-                ble_hs_sched_reset(BLE_HS_ECONTROLLER);
-            } else {
-                ble_gap_conn_cancel();
-                ble_gap_disc_cancel();
-                scan_start();
-            }
+            /* (a host reset here ended in a controller assert on hardware: only the scan restart) */
+            (void)quiet;
+            ble_gap_conn_cancel();
+            ble_gap_disc_cancel();
+            scan_start();
         }
     } else {
         still = 0;
