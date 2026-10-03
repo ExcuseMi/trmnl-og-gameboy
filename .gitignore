@@ -9,3 +9,4 @@ tools/host/gb_host
 .venv/
 build-qemu/
 build-qemu.log
+tools/host/test_save

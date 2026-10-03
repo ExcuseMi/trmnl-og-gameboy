@@ -13,6 +13,8 @@
 #include "gb_core.h"
 #include "gb_input.h"
 #include "gb_render.h"
+#include "gb_save.h"
+#include "save_flash.h"
 #include "sdkconfig.h"
 
 #define FRAME_US 16742 /* 1e6 / 59.7275 */
@@ -96,12 +98,28 @@ static void emu_task(void *arg)
 {
     (void)arg;
     int64_t next = esp_timer_get_time(), stat = next;
+    size_t ram_len;
+    uint8_t *ram = gb_core_cart_ram(&ram_len);
+    gb_save_t save;
+    if (ram) {
+        save_flash_load(ram, ram_len);
+        gb_save_init(&save, ram, ram_len, save_flash_write, next);
+    }
+    uint32_t seen_writes = gb_core_ram_writes();
     uint32_t last_emu = 0, last_panel = 0;
     for (;;) {
         bool render = state == FRAME_WANTED;
         gb_core_set_render(render);
         gb_core_frame(gb_input_poll());
         n_emu++;
+        if (ram) {
+            int64_t t = esp_timer_get_time();
+            if (gb_core_ram_writes() != seen_writes) {
+                seen_writes = gb_core_ram_writes();
+                gb_save_touch(&save, t);
+            }
+            gb_save_poll(&save, t);
+        }
         if (render) state = FRAME_READY;
         int64_t now = esp_timer_get_time();
         next += FRAME_US;
