@@ -1,10 +1,10 @@
 menu "Game Boy"
-    config GB_EPD_GEN2
-        bool "Panel is the GEN2 variant (GEDY075-D2)"
+    config GB_EPD_T7
+        bool "Panel profile GDEY075T7 instead of GEN2 (tiny-paper's default on the TRMNL OG is GEN2)"
         default n
     config GB_FULL_EVERY
         int "Full refresh after this many partial refreshes"
-        default 20
+        default 60
         range 1 1000
     config GB_START_HOLD_MS
         int "Hold the button this long for Start"

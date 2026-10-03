@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 #include "pad.h"
 #include <stdio.h>
+#include <string.h>
 #include "esp_timer.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -33,7 +34,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg);
 
 static void scan_start(void)
 {
-    struct ble_gap_disc_params p = { .itvl = 0x60, .window = 0x30, .passive = 1 };
+    struct ble_gap_disc_params p = { .itvl = 0x60, .window = 0x30, .passive = 0 } /* active: the name is in the scan response */;
     int rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &p, gap_event, NULL);
     if (rc && rc != BLE_HS_EALREADY) printf("pad error=scan rc=%d\n", rc);
 }
@@ -129,9 +130,11 @@ static bool wanted(const struct ble_gap_disc_desc *d)
     if (bonded(&d->addr)) return true; /* a bonded pad may advertise directed, without data */
     struct ble_hs_adv_fields f;
     if (ble_hs_adv_parse_fields(&f, d->data, d->length_data)) return false;
+    /* Only gamepads: any HID device (a remote, a keyboard nearby) would take the one connection. */
     if (f.appearance_is_present && f.appearance == APPEARANCE_GAMEPAD) return true;
-    for (int i = 0; i < f.num_uuids16; i++)
-        if (ble_uuid_u16(&f.uuids16[i].u) == UUID_HID) return true;
+    if (f.name && f.name_len >= 4)
+        for (int i = 0; i + 4 <= f.name_len; i++)
+            if (!memcmp(f.name + i, "Xbox", 4)) return true;
     return false;
 }
 
@@ -207,6 +210,18 @@ static void on_sync(void)
     if (rc) {
         printf("pad error=address rc=%d\n", rc);
         return;
+    }
+    /* Bonds made before the firmware connected to gamepads only may be with another HID device: drop them once. */
+    nvs_handle_t h;
+    if (!nvs_open("gb", NVS_READWRITE, &h)) {
+        uint8_t v = 0;
+        if (nvs_get_u8(h, "bondv", &v) || v != 2) {
+            ble_store_clear();
+            nvs_set_u8(h, "bondv", 2);
+            nvs_commit(h);
+            printf("pad bonds cleared\n");
+        }
+        nvs_close(h);
     }
     printf("pad scanning\n");
     scan_start();

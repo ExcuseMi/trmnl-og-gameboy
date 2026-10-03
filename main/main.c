@@ -66,12 +66,17 @@ static void panel_task(void *arg)
     (void)arg;
     epd_pins_t pins = { BOARD_EPD_SCK, BOARD_EPD_MOSI, BOARD_EPD_CS, BOARD_EPD_DC, BOARD_EPD_RST, BOARD_EPD_BUSY,
                         BOARD_EPD_SPI_HZ };
-#ifdef CONFIG_GB_EPD_GEN2
-    epd_variant_t variant = EPD_GEN2;
-#else
+#ifdef CONFIG_GB_EPD_T7
     epd_variant_t variant = EPD_GDEY075T7;
+#else
+    epd_variant_t variant = EPD_GEN2;
 #endif
-    epd_cfg_t cfg = { .variant = variant, .part_wave = EPD_PART_OTP, .window_refresh = true };
+    /* tiny-paper's settings, tuned by eye on a real TRMNL OG: GxEPD2 partial LUTs, windowed, reps 1, VCOM DC 0x20
+     * (solid black, no flash on a partial refresh). */
+    epd_cfg_t cfg = { .variant = variant, .part_wave = EPD_PART_GX, .window_refresh = true, .lut_reps = 1,
+                      .lut_vcom = 0x20 };
+    printf("gb panel variant=%s part=%s full_every=%d\n", epd_variant_name(variant), epd_part_wave_name(cfg.part_wave),
+           CONFIG_GB_FULL_EVERY);
     if (!NO_PANEL && epd_open(&pins, &cfg)) {
         printf("gb error=epd_open\n");
         vTaskDelete(NULL);

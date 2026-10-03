@@ -56,7 +56,7 @@ The save belongs to the game that wrote it: before another game with battery RAM
 | Threshold instead of dither | `make build GB_SHADE_MODE=threshold` (two dark shades black, two light white). Compare: `docs/acid2-120.png`, `docs/acid2-threshold-120.png` |
 | Host check (gcc only) | `make host-check` -> PNGs in `docs/`; `make -C tools/host test` (save policy, Xbox report parser) |
 | QEMU boot (no panel, no Bluetooth) | `tools/idf/idf.sh tools/qemu.sh tests/roms/libbet.gb 40` |
-| GEN2 panel variant | set `GB_EPD_GEN2` in `idf.py menuconfig` (default GDEY075T7) |
+| Panel profile | GEN2 with GxEPD2 partial LUTs (tiny-paper's tuned OG settings); `GB_EPD_T7` in `idf.py menuconfig` for GDEY075T7 |
 | Pages | `.github/workflows/pages.yml` builds on every push to main and publishes `tools/web` with the image |
 
 ## Flash and load without the hosted page

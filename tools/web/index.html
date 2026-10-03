@@ -36,6 +36,18 @@ use Chrome or Edge on a computer, or Chrome on an Android phone with a USB data 
   <button id="upload">Upload ROM</button>
 </section>
 
+<section>
+  <b>Backup</b> <small>the whole device (4 MB: firmware, game, save, or tiny-paper before you replace it)</small>
+  <button id="backup">Save backup to a file</button>
+  <label>Backup file to put back: <input type="file" id="bakfile" accept=".bin"></label>
+  <button id="restore">Restore backup</button>
+</section>
+
+<section>
+  <b>3. Device log</b> <small>what the firmware prints (controller, speed, memory)</small>
+  <button id="logbtn">Show device log</button> <button id="copy">Copy log</button>
+</section>
+
 <progress id="bar" value="0" max="100"></progress>
 <pre id="log"></pre>
 <p><small>The ROM never leaves your computer: it goes from this page straight to the device. The save game on the
@@ -114,12 +126,67 @@ async function write(data, address, what) {
   }
 }
 
+const FLASH_SIZE = 0x400000;
+
+async function backup() {
+  if (!serial) throw new Error("this browser cannot reach USB devices");
+  const port = await serial.requestPort();
+  const transport = new Transport(port, true);
+  try {
+    const loader = new ESPLoader({ transport, baudrate: 115200, terminal });
+    log(`Connecting (${await loader.main()})\n`);
+    log(`Reading ${FLASH_SIZE} bytes\n`);
+    const data = await loader.readFlash(0, FLASH_SIZE, (packet, got, total) => { $("bar").value = 100 * got / total; });
+    if (data.length !== FLASH_SIZE) throw new Error(`short read: ${data.length} bytes`);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([data], { type: "application/octet-stream" }));
+    a.download = `trmnl-og-backup-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.bin`;
+    a.click();
+    await loader.after("hard_reset");
+    log(`Done: backup saved as ${a.download}, device restarted.\n`);
+  } finally {
+    await transport.disconnect().catch(() => {});
+  }
+}
+
+function setBusy(on) { for (const id of ["flash", "upload", "backup", "restore"]) $(id).disabled = on; }
+
 async function run(fn) {
-  $("flash").disabled = $("upload").disabled = true;
+  setBusy(true);
   $("bar").value = 0;
   try { await fn(); } catch (e) { log(`Error: ${e.name || ""} ${e.message || e}\n`); }
-  $("flash").disabled = $("upload").disabled = false;
+  setBusy(false);
 }
+
+/* Text the firmware prints over USB, until the button is pressed again or the device goes away. */
+let logging = null;
+$("logbtn").onclick = async () => {
+  if (logging) { await logging.cancel().catch(() => {}); return; }
+  try {
+    if (!serial) throw new Error("this browser cannot reach USB devices");
+    const port = await serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false }).catch(() => {});
+    $("logbtn").textContent = "Stop device log";
+    setBusy(true);
+    const dec = new TextDecoder();
+    logging = port.readable.getReader();
+    try {
+      for (;;) {
+        const { value, done } = await logging.read();
+        if (done) break;
+        if (value) log(dec.decode(value, { stream: true }));
+      }
+    } finally {
+      logging.releaseLock();
+      await port.close().catch(() => {});
+    }
+  } catch (e) { log(`Error: ${e.name || ""} ${e.message || e}\n`); }
+  logging = null;
+  $("logbtn").textContent = "Show device log";
+  setBusy(false);
+};
+$("copy").onclick = () => navigator.clipboard.writeText($("log").textContent).catch(() => {});
 
 $("flash").onclick = () => run(async () => {
   if (!offsets) throw new Error("offsets.json is missing");
@@ -137,6 +204,18 @@ $("flash").onclick = () => run(async () => {
   if (data[0] !== 0xe9) throw new Error("not a merged ESP image (first byte is not 0xE9)");
   if (data.length > offsets.rom.offset) throw new Error("image reaches into the rom partition");
   await write(data, offsets.firmware.offset, "firmware");
+});
+
+$("backup").onclick = () => run(backup);
+
+$("restore").onclick = () => run(async () => {
+  const f = $("bakfile").files[0];
+  if (!f) throw new Error("choose a backup file first");
+  const data = new Uint8Array(await f.arrayBuffer());
+  if (data.length !== FLASH_SIZE) throw new Error(`a backup is ${FLASH_SIZE} bytes, this file has ${data.length}`);
+  if (data[0] !== 0xe9) throw new Error("not a device backup (first byte is not 0xE9)");
+  if (!confirm("Replace everything on the device with this backup?")) return;
+  await write(data, 0, "backup");
 });
 
 $("upload").onclick = () => run(async () => {
