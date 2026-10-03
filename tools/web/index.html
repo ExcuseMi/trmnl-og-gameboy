@@ -51,7 +51,9 @@ const terminal = { clean() {}, writeLine: (s) => log(s + "\n"), write: (s) => lo
 let offsets = null, hosted = false;
 
 /* Web Serial on a computer; on Android Chrome (no Web Serial) the same API over WebUSB. */
-let serial = navigator.serial || null;
+/* Android Chrome has Web Serial for Bluetooth ports only: its picker never lists a USB device, so use WebUSB there. */
+const android = /Android/i.test(navigator.userAgent);
+let serial = android ? null : (navigator.serial || null);
 if (!serial && "usb" in navigator) {
   try {
     const usb = await import("https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js");
