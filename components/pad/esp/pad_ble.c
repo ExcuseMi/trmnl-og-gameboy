@@ -68,6 +68,44 @@ static volatile int g_disc; /* reason of the last disconnect */
 
 static int gap_event(struct ble_gap_event *ev, void *arg);
 
+/* Linker wraps (CMakeLists.txt): the transport's receive buffer allocation and the host's processing of a received
+ * packet, to see on hardware where received packets stay. */
+struct os_mbuf *__real_ble_transport_alloc_acl_from_ll(void);
+int __real_ble_hs_hci_evt_acl_process(struct os_mbuf *om);
+static struct os_mempool *volatile acl_pool;
+static volatile uint32_t n_alloc, n_alloc_fail, n_proc, n_proc_ok, n_proc_again, n_proc_err;
+static volatile int last_rc;
+static volatile uint8_t last_head[8];
+static volatile uint16_t last_len;
+
+struct os_mbuf *__wrap_ble_transport_alloc_acl_from_ll(void)
+{
+    struct os_mbuf *om = __real_ble_transport_alloc_acl_from_ll();
+    if (om) {
+        n_alloc++;
+        acl_pool = om->om_omp->omp_pool;
+    } else {
+        n_alloc_fail++;
+    }
+    return om;
+}
+
+int __wrap_ble_hs_hci_evt_acl_process(struct os_mbuf *om)
+{
+    uint8_t h[8] = { 0 };
+    uint16_t len = OS_MBUF_PKTLEN(om);
+    os_mbuf_copydata(om, 0, len < sizeof h ? len : (int)sizeof h, h);
+    int rc = __real_ble_hs_hci_evt_acl_process(om);
+    n_proc++;
+    if (rc == 0) n_proc_ok++;
+    else if (rc == BLE_HS_EAGAIN) n_proc_again++;
+    else n_proc_err++;
+    last_rc = rc;
+    last_len = len;
+    memcpy((void *)last_head, h, sizeof h);
+    return rc;
+}
+
 static void scan_start(void)
 {
     struct ble_gap_disc_params p = { .itvl = 0x60, .window = 0x30, .passive = 0 } /* active: the name is in the scan response */;
@@ -470,6 +508,15 @@ const char *pad_state(void)
         printf("pad host events=%u last=%d beat=%u acl_free=%d acl_min=%d rx_acl=%u msys_free=%d stack_free=%u\n",
                (unsigned)n_ev, g_evt, (unsigned)n_beat, acl_free, acl_min, (unsigned)n_rx, os_msys_num_free(),
                host ? (unsigned)uxTaskGetStackHighWaterMark(host) : 0);
+    }
+    {
+        struct os_mempool *mp = acl_pool;
+        printf("pad rx alloc=%u fail=%u proc=%u ok=%u again=%u err=%u last_rc=%d len=%u head=%02x%02x%02x%02x%02x%02x%02x%02x "
+               "pool_free=%d pool_min=%d pool_n=%d\n",
+               (unsigned)n_alloc, (unsigned)n_alloc_fail, (unsigned)n_proc, (unsigned)n_proc_ok, (unsigned)n_proc_again,
+               (unsigned)n_proc_err, last_rc, last_len, last_head[0], last_head[1], last_head[2], last_head[3],
+               last_head[4], last_head[5], last_head[6], last_head[7], mp ? mp->mp_num_free : -1,
+               mp ? mp->mp_min_free : -1, mp ? mp->mp_num_blocks : -1);
     }
     snprintf(text, sizeof text, "%s peer=%s links=%u disc=%d rescans=%u notif=%u len=%u", st, g_peer, (unsigned)n_link,
              g_disc, (unsigned)n_rescan, (unsigned)n_notif, g_len);
