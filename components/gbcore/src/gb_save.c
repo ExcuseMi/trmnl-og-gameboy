@@ -30,6 +30,18 @@ bool gb_save_hdr_ok(const uint8_t hdr[GB_SAVE_HDR_SIZE], const uint8_t *data, si
     return get32(hdr) == MAGIC && get32(hdr + 4) == size && get32(hdr + 8) == gb_crc32(data, size);
 }
 
+size_t gb_save_sectors(size_t size) { return (GB_SAVE_HDR_SIZE + size + GB_SAVE_SECTOR - 1) / GB_SAVE_SECTOR; }
+
+bool gb_save_image_eq(const uint8_t hdr[GB_SAVE_HDR_SIZE], const uint8_t *data, size_t size, size_t off,
+                      const uint8_t *flash, size_t n)
+{
+    for (size_t i = 0; i < n; i++, off++) {
+        uint8_t b = off < GB_SAVE_HDR_SIZE ? hdr[off] : off - GB_SAVE_HDR_SIZE < size ? data[off - GB_SAVE_HDR_SIZE] : 0xff;
+        if (flash[i] != b) return false;
+    }
+    return true;
+}
+
 void gb_save_init(gb_save_t *s, uint8_t *ram, size_t size, int (*write)(const uint8_t *, size_t), int64_t now_us)
 {
     memset(s, 0, sizeof *s);

@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #define GB_SAVE_QUIET_US 2000000
-#define GB_SAVE_MIN_GAP_US 10000000
+#define GB_SAVE_MIN_GAP_US 30000000
 #define GB_SAVE_HDR_SIZE 16 /* magic, size, crc32 of the data, reserved; stored in front of the data, written last */
 
 typedef struct {
@@ -25,6 +25,12 @@ uint32_t gb_crc32(const uint8_t *p, size_t n);
 void gb_save_hdr_make(uint8_t hdr[GB_SAVE_HDR_SIZE], const uint8_t *data, size_t size);
 /* True if hdr belongs to `size` bytes of data and the data matches its CRC. */
 bool gb_save_hdr_ok(const uint8_t hdr[GB_SAVE_HDR_SIZE], const uint8_t *data, size_t size);
+/* Flash is written per 4 KB sector, only where the stored image differs (some games churn a RAM bank all the time). */
+#define GB_SAVE_SECTOR 4096
+size_t gb_save_sectors(size_t size); /* sectors of the stored image (header + data) */
+/* True if the stored image bytes [off, off+n) (header hdr, then data) equal flash[0..n). */
+bool gb_save_image_eq(const uint8_t hdr[GB_SAVE_HDR_SIZE], const uint8_t *data, size_t size, size_t off,
+                      const uint8_t *flash, size_t n);
 /* ram holds the loaded (or empty) cart RAM. */
 void gb_save_init(gb_save_t *s, uint8_t *ram, size_t size, int (*write)(const uint8_t *, size_t), int64_t now_us);
 /* The cart wrote to its RAM. */
