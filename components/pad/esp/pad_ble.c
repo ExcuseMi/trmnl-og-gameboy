@@ -38,6 +38,7 @@ static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
 static volatile uint32_t n_link, n_rescan;
 static volatile uint32_t n_notif, n_reset;
+static char g_peer[24] = "-"; /* end of the address and RSSI of the device last connected to */
 static volatile unsigned g_len; /* length of the last notification */
 static volatile int g_disc; /* reason of the last disconnect */
 
@@ -212,6 +213,20 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         if (!wanted(&ev->disc)) return 0;
         n_pad++;
         peer = ev->disc.addr;
+        {
+            /* which device this is: several gamepads may be in range, and only one of them is in the player's hands */
+            struct ble_hs_adv_fields f;
+            char name[24] = "";
+            if (!ble_hs_adv_parse_fields(&f, ev->disc.data, ev->disc.length_data) && f.name && f.name_len) {
+                size_t n = f.name_len < sizeof name - 1 ? f.name_len : sizeof name - 1;
+                memcpy(name, f.name, n);
+                name[n] = 0;
+            }
+            printf("pad found %02x:%02x:%02x:%02x:%02x:%02x rssi=%d bonded=%d name='%s'\n", peer.val[5], peer.val[4],
+                   peer.val[3], peer.val[2], peer.val[1], peer.val[0], ev->disc.rssi, bonded(&peer), name);
+            snprintf(g_peer, sizeof g_peer, "%02x%02x%02x rssi=%d", peer.val[2], peer.val[1], peer.val[0],
+                     ev->disc.rssi);
+        }
         ble_gap_disc_cancel();
         rc = ble_gap_connect(own_addr_type, &peer, 10000, NULL, gap_event, NULL);
         if (rc) {
@@ -360,7 +375,7 @@ bool pad_connected(void) { return g_connected; }
  * advert the pending connect and the scan are cancelled and the scan starts again. */
 const char *pad_state(void)
 {
-    static char text[96];
+    static char text[128];
     static uint32_t seen;
     static int still, quiet;
     const char *st = g_state;
@@ -379,8 +394,8 @@ const char *pad_state(void)
         still = 0;
     }
     seen = n_adv;
-    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u resets=%u notif=%u len=%u", st, (unsigned)n_link,
-             g_disc, (unsigned)n_rescan, (unsigned)n_reset, (unsigned)n_notif, g_len);
+    snprintf(text, sizeof text, "%s peer=%s links=%u disc=%d rescans=%u notif=%u len=%u", st, g_peer, (unsigned)n_link,
+             g_disc, (unsigned)n_rescan, (unsigned)n_notif, g_len);
     return text;
 }
 void pad_counts(uint32_t *adv, uint32_t *pads, int *err)
