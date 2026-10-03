@@ -226,6 +226,15 @@ static bool wanted(const struct ble_gap_disc_desc *d)
     return false;
 }
 
+static int on_mtu(uint16_t conn, const struct ble_gatt_error *err, uint16_t mtu, void *arg)
+{
+    (void)arg;
+    evf("pad mtu=%u rc=%d", mtu, err ? err->status : -1);
+    int rc = ble_gattc_disc_svc_by_uuid(conn, BLE_UUID16_DECLARE(UUID_HID), on_svc, NULL);
+    if (rc) give_up(conn, "discover", rc);
+    return 0;
+}
+
 static int gap_event(struct ble_gap_event *ev, void *arg)
 {
     (void)arg;
@@ -288,8 +297,9 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
             return 0;
         }
         g_state = "setup";
-        rc = ble_gattc_disc_svc_by_uuid(ev->enc_change.conn_handle, BLE_UUID16_DECLARE(UUID_HID), on_svc, NULL);
-        if (rc) give_up(ev->enc_change.conn_handle, "discover", rc);
+        /* MTU exchange first, as the host libraries that work with the Xbox pad do on every connect */
+        rc = ble_gattc_exchange_mtu(ev->enc_change.conn_handle, on_mtu, NULL);
+        if (rc) on_mtu(ev->enc_change.conn_handle, NULL, 0, NULL);
         return 0;
     case BLE_GAP_EVENT_REPEAT_PAIRING:
         forget(ev->repeat_pairing.conn_handle);
@@ -333,8 +343,25 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
     }
 }
 
+/* Runs in the host task twice a second: a count that stands still means the host task hangs. */
+static struct ble_npl_callout beat;
+static volatile uint32_t n_beat;
+
+static void beat_cb(struct ble_npl_event *ev)
+{
+    (void)ev;
+    n_beat++;
+    ble_npl_callout_reset(&beat, ble_npl_time_ms_to_ticks32(500));
+}
+
 static void on_sync(void)
 {
+    static bool once;
+    if (!once) {
+        once = true;
+        ble_npl_callout_init(&beat, nimble_port_get_dflt_eventq(), beat_cb, NULL);
+        ble_npl_callout_reset(&beat, ble_npl_time_ms_to_ticks32(500));
+    }
     int rc = ble_hs_util_ensure_addr(0);
     if (!rc) rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc) {
@@ -375,6 +402,7 @@ void pad_init(void)
         e = nvs_flash_init();
     }
     if (!e) e = nimble_port_init();
+    if (!e) ble_att_set_preferred_mtu(255);
     if (!e) esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9); /* +9 dBm, as the working Xbox hosts */
     if (e) {
         g_err = (int)e;
@@ -424,7 +452,8 @@ const char *pad_state(void)
     {
         static TaskHandle_t host;
         if (!host) host = xTaskGetHandle("nimble_host");
-        printf("pad host events=%u last=%d stack_free=%u\n", (unsigned)n_ev, g_evt,
+        printf("pad host events=%u last=%d beat=%u msys_free=%d stack_free=%u\n", (unsigned)n_ev, g_evt,
+               (unsigned)n_beat, os_msys_num_free(),
                host ? (unsigned)uxTaskGetStackHighWaterMark(host) : 0);
     }
     snprintf(text, sizeof text, "%s peer=%s links=%u disc=%d rescans=%u notif=%u len=%u", st, g_peer, (unsigned)n_link,
