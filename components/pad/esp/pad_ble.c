@@ -33,7 +33,7 @@ static const char *volatile g_state = "off";
 static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
 static volatile uint32_t n_link, n_rescan;
-static volatile uint32_t n_notif;
+static volatile uint32_t n_notif, n_reset;
 static volatile unsigned g_len; /* length of the last notification */
 static volatile int g_disc; /* reason of the last disconnect */
 
@@ -305,23 +305,29 @@ const char *pad_state(void)
 {
     static char text[96];
     static uint32_t seen;
-    static int still;
+    static int still, quiet;
     const char *st = g_state;
     if (!g_connected && !strcmp(st, "scan")) {
-        if (n_adv != seen) still = 0;
+        if (n_adv != seen) still = quiet = 0;
         else if (++still >= 5) {
             still = 0;
             n_rescan++;
-            ble_gap_conn_cancel();
-            ble_gap_disc_cancel();
-            scan_start();
+            if (++quiet >= 3) { /* restarts did not help: reset host and controller, on_sync scans again */
+                quiet = 0;
+                n_reset++;
+                ble_hs_sched_reset(BLE_HS_ECONTROLLER);
+            } else {
+                ble_gap_conn_cancel();
+                ble_gap_disc_cancel();
+                scan_start();
+            }
         }
     } else {
         still = 0;
     }
     seen = n_adv;
-    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u notif=%u len=%u", st, (unsigned)n_link, g_disc,
-             (unsigned)n_rescan, (unsigned)n_notif, g_len);
+    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u resets=%u notif=%u len=%u", st, (unsigned)n_link,
+             g_disc, (unsigned)n_rescan, (unsigned)n_reset, (unsigned)n_notif, g_len);
     return text;
 }
 void pad_counts(uint32_t *adv, uint32_t *pads, int *err)
