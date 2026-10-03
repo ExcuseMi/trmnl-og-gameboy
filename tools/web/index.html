@@ -54,8 +54,14 @@ let offsets = null, hosted = false;
 let serial = navigator.serial || null;
 if (!serial && "usb" in navigator) {
   try {
-    serial = (await import("https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js")).serial;
-    log("Phone mode: USB access through WebUSB.\n");
+    const usb = await import("https://cdn.jsdelivr.net/npm/web-serial-polyfill@1.0.15/dist/serial.js");
+    /* No filter: the picker lists every USB device the phone sees, so an empty list means cable or sleep. */
+    serial = { async requestPort() {
+      const d = await navigator.usb.requestDevice({ filters: [] });
+      log(`USB device ${d.productName || "?"} ${hex(d.vendorId)}:${hex(d.productId)}\n`);
+      return new usb.SerialPort(d);
+    } };
+    log("Phone mode: USB access through WebUSB. If the list is empty, press the button on the OG to wake it.\n");
   } catch (e) { log("WebUSB helper did not load: " + (e.message || e) + "\n"); }
 }
 if (!serial) $("nousb").hidden = false;
@@ -107,7 +113,7 @@ async function write(data, address, what) {
 async function run(fn) {
   $("flash").disabled = $("upload").disabled = true;
   $("bar").value = 0;
-  try { await fn(); } catch (e) { log(`Error: ${e.message || e}\n`); }
+  try { await fn(); } catch (e) { log(`Error: ${e.name || ""} ${e.message || e}\n`); }
   $("flash").disabled = $("upload").disabled = false;
 }
 
