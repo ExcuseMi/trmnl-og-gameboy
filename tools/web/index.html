@@ -104,6 +104,12 @@ function romProblem(size) {
 }
 window.romProblem = romProblem;
 
+/* After the restart the USB device is gone for a moment: closing the port can then hang (seen on Android), which
+   left the buttons disabled until a reload. Give it 2 s, then go on. */
+function release(transport) {
+  return Promise.race([transport.disconnect().catch(() => {}), new Promise((ok) => setTimeout(ok, 2000))]);
+}
+
 async function write(data, address, what) {
   if (!serial) throw new Error("this browser cannot reach USB devices");
   const port = await serial.requestPort();
@@ -122,7 +128,7 @@ async function write(data, address, what) {
     await loader.after("hard_reset");
     log(`Done: ${what} written, device restarted.\n`);
   } finally {
-    await transport.disconnect().catch(() => {});
+    await release(transport);
   }
 }
 
@@ -145,7 +151,7 @@ async function backup() {
     await loader.after("hard_reset");
     log(`Done: backup saved as ${a.download}, device restarted.\n`);
   } finally {
-    await transport.disconnect().catch(() => {});
+    await release(transport);
   }
 }
 
