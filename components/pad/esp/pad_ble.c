@@ -41,6 +41,7 @@ static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
 static volatile uint32_t n_link, n_rescan;
 static volatile uint32_t n_notif, n_reset;
+static volatile uint32_t n_rx; /* GATT callbacks run (reads, discovery, writes): each is at least one packet received */
 static volatile uint32_t n_ev;  /* GAP events handled: stands still if the host task hangs */
 static volatile int g_evt = -1; /* type of the last GAP event */
 
@@ -102,6 +103,7 @@ static void subscribe_next(uint16_t conn);
 
 static int on_sub(uint16_t conn, const struct ble_gatt_error *err, struct ble_gatt_attr *attr, void *arg)
 {
+    n_rx++;
     (void)attr;
     (void)arg;
     if (err->status) {
@@ -129,6 +131,7 @@ static void subscribe_next(uint16_t conn)
 static int on_dsc(uint16_t conn, const struct ble_gatt_error *err, uint16_t chr_val_handle,
                   const struct ble_gatt_dsc *dsc, void *arg)
 {
+    n_rx++;
     (void)chr_val_handle;
     (void)arg;
     if (err->status == 0) {
@@ -151,6 +154,7 @@ static void read_next(uint16_t conn);
 
 static int on_read(uint16_t conn, const struct ble_gatt_error *err, struct ble_gatt_attr *attr, void *arg)
 {
+    n_rx++;
     (void)attr;
     (void)arg;
     if (err->status == 0) return 0; /* a part of a long value; BLE_HS_EDONE follows */
@@ -173,6 +177,7 @@ static void read_next(uint16_t conn)
 
 static int on_chr(uint16_t conn, const struct ble_gatt_error *err, const struct ble_gatt_chr *chr, void *arg)
 {
+    n_rx++;
     (void)arg;
     if (err->status == 0) {
         if ((chr->properties & BLE_GATT_CHR_PROP_READ) && n_rd < MAX_CHR) rd[n_rd++] = chr->val_handle;
@@ -190,6 +195,7 @@ static int on_chr(uint16_t conn, const struct ble_gatt_error *err, const struct 
 
 static int on_svc(uint16_t conn, const struct ble_gatt_error *err, const struct ble_gatt_svc *svc, void *arg)
 {
+    n_rx++;
     (void)arg;
     if (err->status == 0) {
         hid_start = svc->start_handle;
@@ -228,6 +234,7 @@ static bool wanted(const struct ble_gap_disc_desc *d)
 
 static int on_mtu(uint16_t conn, const struct ble_gatt_error *err, uint16_t mtu, void *arg)
 {
+    n_rx++;
     (void)arg;
     evf("pad mtu=%u rc=%d", mtu, err ? err->status : -1);
     int rc = ble_gattc_disc_svc_by_uuid(conn, BLE_UUID16_DECLARE(UUID_HID), on_svc, NULL);
@@ -452,8 +459,16 @@ const char *pad_state(void)
     {
         static TaskHandle_t host;
         if (!host) host = xTaskGetHandle("nimble_host");
-        printf("pad host events=%u last=%d beat=%u msys_free=%d stack_free=%u\n", (unsigned)n_ev, g_evt,
-               (unsigned)n_beat, os_msys_num_free(),
+        /* receive pool of the transport (24 blocks): free now and the lowest ever */
+        struct os_mempool_info mi;
+        int acl_free = -1, acl_min = -1;
+        for (struct os_mempool *mp = NULL; (mp = os_mempool_info_get_next(mp, &mi)) != NULL;)
+            if (!strcmp(mi.omi_name, "transport_pool_acl")) {
+                acl_free = mi.omi_num_free;
+                acl_min = mi.omi_min_free;
+            }
+        printf("pad host events=%u last=%d beat=%u acl_free=%d acl_min=%d rx_acl=%u msys_free=%d stack_free=%u\n",
+               (unsigned)n_ev, g_evt, (unsigned)n_beat, acl_free, acl_min, (unsigned)n_rx, os_msys_num_free(),
                host ? (unsigned)uxTaskGetStackHighWaterMark(host) : 0);
     }
     snprintf(text, sizeof text, "%s peer=%s links=%u disc=%d rescans=%u notif=%u len=%u", st, g_peer, (unsigned)n_link,
