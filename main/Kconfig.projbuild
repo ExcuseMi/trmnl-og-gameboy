@@ -15,4 +15,8 @@ menu "Game Boy"
     config GB_PAD_BLE
         bool "Bluetooth LE gamepad (Xbox Wireless Controller)"
         default y
+    config GB_STATE_EVERY_S
+        int "Save state (full snapshot, resumed at boot) every this many seconds of running, 0 = off"
+        default 120
+        range 0 86400
 endmenu

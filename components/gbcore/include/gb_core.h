@@ -17,4 +17,13 @@ const char *gb_core_title(void);
 uint8_t *gb_core_cart_ram(size_t *len);
 /* Counts the cart's writes to its RAM. */
 uint32_t gb_core_ram_writes(void);
+/* Save state: the payload is the emulator struct followed by the cart RAM, read and written in pieces so no second
+ * copy is needed. Function pointers are zeroed in what is read and restored after a load, never taken from flash.
+ * Call between frames. Size is fixed after gb_core_init. */
+size_t gb_core_state_size(void);
+void gb_core_state_read(size_t off, uint8_t *buf, size_t n);
+/* load: begin, write the pieces in order, end. False if the loaded state does not fit the cart (call gb_core_init). */
+void gb_core_state_begin(void);
+void gb_core_state_write(size_t off, const uint8_t *buf, size_t n);
+bool gb_core_state_end(void);
 #endif

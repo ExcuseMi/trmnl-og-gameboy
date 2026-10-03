@@ -13,3 +13,4 @@ tools/host/test_save
 tools/host/test_xbox
 tools/host/gb_host_threshold
 tools/web/gameboy-merged.bin
+tools/host/test_state

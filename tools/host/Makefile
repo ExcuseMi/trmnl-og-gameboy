@@ -14,8 +14,12 @@ test_save: test_save.c ../../components/gbcore/src/gb_save.c
 	$(CC) $(CFLAGS) -o $@ $^
 test_xbox: test_xbox.c ../../components/pad/src/xbox_report.c
 	$(CC) $(CFLAGS) -I../../components/pad/include -o $@ $^
-test: test_save test_xbox
+test_state: test_state.c ../../components/gbcore/src/gb_state.c ../../components/gbcore/src/gb_core.c ../../components/gbcore/src/gb_render.c ../../components/gbcore/src/gb_save.c
+	$(CC) $(CFLAGS) -o $@ $^
+test: test_save test_xbox test_state
+	../fetch_roms.sh >/dev/null
 	./test_save
+	./test_state
 	./test_xbox
 clean:
-	rm -f gb_host gb_host_threshold test_save test_xbox
+	rm -f gb_host gb_host_threshold test_save test_xbox test_state

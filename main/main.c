@@ -16,7 +16,9 @@
 #include "gb_render.h"
 #include "gb_save.h"
 #include "pad.h"
+#include "gb_state.h"
 #include "save_flash.h"
+#include "state_flash.h"
 #include "sdkconfig.h"
 
 #define FRAME_US 16742 /* 1e6 / 59.7275 */
@@ -122,14 +124,15 @@ static void emu_task(void *arg)
     (void)arg;
     int64_t next = esp_timer_get_time(), stat = next;
     size_t ram_len;
-    uint8_t *ram = gb_core_cart_ram(&ram_len);
+    uint8_t *ram = gb_core_cart_ram(&ram_len); /* loaded (battery save, then a resumed state) by app_main */
     gb_save_t save;
     if (ram) {
-        save_flash_load(ram, ram_len);
         gb_save_init(&save, ram, ram_len, save_flash_write, next);
     }
     uint32_t seen_writes = gb_core_ram_writes();
     uint32_t last_emu = 0, last_panel = 0;
+    const int64_t state_us = (int64_t)CONFIG_GB_STATE_EVERY_S * 1000000;
+    int64_t state_next = next + state_us;
     for (;;) {
         bool render = state == FRAME_WANTED;
         gb_core_set_render(render);
@@ -144,6 +147,10 @@ static void emu_task(void *arg)
             gb_save_poll(&save, t);
         }
         if (render) state = FRAME_READY;
+        if (state_us && esp_timer_get_time() >= state_next) { /* frame boundary: the emulator is not running while it is written */
+            state_flash_write();
+            state_next = esp_timer_get_time() + state_us;
+        }
         int64_t now = esp_timer_get_time();
         next += FRAME_US;
         if (next > now) {
@@ -187,6 +194,14 @@ void app_main(void)
             printf("gb error=no valid ROM in the rom partition (rc=%d): run tools/load_rom.sh\n", rc);
             vTaskDelay(pdMS_TO_TICKS(5000));
         }
+    }
+    size_t ram_len;
+    uint8_t *ram = gb_core_cart_ram(&ram_len);
+    if (ram) save_flash_load(ram, ram_len);
+    if (CONFIG_GB_STATE_EVERY_S && state_flash_open(gb_state_rom_id(rom, p->size)) && state_flash_resume() < 0) {
+        gb_core_init(rom, p->size, fb); /* a state that did not fit the cart left the core half loaded */
+        ram = gb_core_cart_ram(&ram_len);
+        if (ram) save_flash_load(ram, ram_len);
     }
     printf("gb rom='%s' shade=%s heap_free=%u\n", gb_core_title(), gb_shade_name(),
            (unsigned)esp_get_free_heap_size());

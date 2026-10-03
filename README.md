@@ -11,6 +11,7 @@ controller over Bluetooth. Proof of concept: is it playable at e-ink frame rates
 | Refresh | partial refresh of the changed rows, full refresh every 20 partials (`menuconfig` > Game Boy) |
 | Input | Xbox controller over Bluetooth LE; the OG button too: press = A, hold 1 s = Start |
 | Saves | battery RAM (up to 32 KB) in the `save` flash partition |
+| Save states | full snapshot of the emulator every 2 minutes (`GB_STATE_EVERY_S`, 0 = off), resumed at boot |
 | Games | homebrew or games you own, never in this repo; loaded over USB |
 
 ## Play (owner)
@@ -40,8 +41,17 @@ controller over Bluetooth. Proof of concept: is it playable at e-ink frame rates
 | Where | What |
 |---|---|
 | `rom` 0x190000, 1 MB | the .gb file as is (Pokemon Red: exactly 1 MB, fits) |
-| `save` 0x290000, 64 KB | cart RAM with a CRC. Written when the game saved and the RAM was quiet for 2 s, at most once per 10 s. Wait for the log line `gb save=written` (or 12 s) before unplugging |
+| `save` 0x290000, 64 KB | cart RAM with a CRC. Written when the game saved and the RAM was quiet for 2 s, at most once per 30 s, and only the 4 KB sectors whose content changed. A cut during a write is detected by the CRC and the save then reads as empty. Wait for the log line `gb save=written sectors=N` (or 32 s) before unplugging |
 | `nvs` 0x2A0000, 24 KB | Bluetooth bond |
+| `state` 0x2B0000, 104 KB | save states: two alternating 52 KB slots, each the whole emulator plus cart RAM with a CRC and the game's identity. Written every 2 minutes (only changed sectors are rewritten; the game pauses well under a second; log `gb state=written`). At boot the newest valid slot of the loaded game is resumed (`gb state=resumed`), so a power cut loses at most 2 minutes. A slot of another game, or a damaged one, is refused and the game starts normally |
+
+| Page section `Save states` | Does |
+|---|---|
+| Download | writes the `save` and `state` regions to `trmnl-og-gameboy-saves-<date>.bin` (the device restarts) |
+| Upload | puts such a file back (checked for size and layout) |
+| Clear | after a confirm, erases both: the game starts fresh |
+
+The first firmware flash that carries this partition table adds `state`; ROM, save and Bluetooth bond keep their offsets and stay.
 
 The save belongs to the game that wrote it: before another game with battery RAM, erase it
 (`esptool.py --chip esp32c3 erase_region 0x290000 0x10000`). To pair another controller erase `nvs`

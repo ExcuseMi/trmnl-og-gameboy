@@ -4,7 +4,9 @@
 #define PEANUT_GB_12_COLOUR 0
 #define PEANUT_GB_HIGH_LCD_ACCURACY 0
 #include "peanut_gb.h"
+#include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include "gb_core.h"
 #include "gb_render.h"
 
@@ -54,3 +56,67 @@ uint8_t *gb_core_cart_ram(size_t *len)
     return g_ram_len ? g_ram : NULL;
 }
 uint32_t gb_core_ram_writes(void) { return g_ram_writes; }
+
+/* Pointers kept apart from the payload: the first block of struct gb_s (all callbacks), lcd_draw_line and priv. */
+#define PTR_END (offsetof(struct gb_s, gb_bootrom_read) + sizeof gb.gb_bootrom_read)
+#define STATE_MAX_SLOT 0xD000u /* partitions.csv: two slots in `state` */
+_Static_assert(sizeof(struct gb_s) + 32768 + 32 <= STATE_MAX_SLOT, "state slot too small for gb_s + 32 KB cart RAM");
+
+static struct {
+    uint8_t mbc, cart_ram, num_ram_banks;
+    uint16_t num_rom_banks_mask;
+    void *priv;
+    void (*draw)(struct gb_s *, const uint8_t *, const uint_fast8_t);
+    uint8_t cb[PTR_END];
+} keep;
+
+size_t gb_core_state_size(void) { return sizeof gb + g_ram_len; }
+
+static void zero_part(uint8_t *buf, size_t off, size_t n, size_t f_off, size_t f_len)
+{
+    size_t a = off > f_off ? off : f_off, b = off + n < f_off + f_len ? off + n : f_off + f_len;
+    if (a < b) memset(buf + (a - off), 0, b - a);
+}
+
+void gb_core_state_read(size_t off, uint8_t *buf, size_t n)
+{
+    size_t k = 0;
+    if (off < sizeof gb) {
+        k = sizeof gb - off < n ? sizeof gb - off : n;
+        memcpy(buf, (const uint8_t *)&gb + off, k);
+        zero_part(buf, off, k, 0, PTR_END);
+        zero_part(buf, off, k, offsetof(struct gb_s, display.lcd_draw_line), sizeof gb.display.lcd_draw_line);
+        zero_part(buf, off, k, offsetof(struct gb_s, direct.priv), sizeof gb.direct.priv);
+    }
+    if (k < n) memcpy(buf + k, g_ram + (off + k - sizeof gb), n - k);
+}
+
+void gb_core_state_begin(void)
+{
+    keep.mbc = (uint8_t)gb.mbc;
+    keep.cart_ram = gb.cart_ram;
+    keep.num_ram_banks = gb.num_ram_banks;
+    keep.num_rom_banks_mask = gb.num_rom_banks_mask;
+    keep.priv = gb.direct.priv;
+    keep.draw = gb.display.lcd_draw_line;
+    memcpy(keep.cb, &gb, PTR_END);
+}
+
+void gb_core_state_write(size_t off, const uint8_t *buf, size_t n)
+{
+    size_t k = 0;
+    if (off < sizeof gb) {
+        k = sizeof gb - off < n ? sizeof gb - off : n;
+        memcpy((uint8_t *)&gb + off, buf, k);
+    }
+    if (k < n) memcpy(g_ram + (off + k - sizeof gb), buf + k, n - k);
+}
+
+bool gb_core_state_end(void)
+{
+    memcpy(&gb, keep.cb, PTR_END);
+    gb.display.lcd_draw_line = keep.draw;
+    gb.direct.priv = keep.priv;
+    return keep.mbc == (uint8_t)gb.mbc && keep.cart_ram == gb.cart_ram && keep.num_ram_banks == gb.num_ram_banks &&
+           keep.num_rom_banks_mask == gb.num_rom_banks_mask;
+}

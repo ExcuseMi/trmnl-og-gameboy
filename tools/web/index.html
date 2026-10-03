@@ -37,6 +37,13 @@ use Chrome or Edge on a computer, or Chrome on an Android phone with a USB data 
 </section>
 
 <section>
+  <b>Save states</b> <small id="stinfo">the battery save and the automatic save states (every 2 minutes), kept on the device</small>
+  <button id="stdown">Download</button> <button id="stclear">Clear</button>
+  <label>Saves file to put back: <input type="file" id="stfile" accept=".bin"></label>
+  <button id="stup">Upload</button>
+</section>
+
+<section>
   <b>Backup</b> <small>the whole device (4 MB: firmware, game, save, or tiny-paper before you replace it)</small>
   <button id="backup">Save backup to a file</button>
   <label>Backup file to put back: <input type="file" id="bakfile" accept=".bin"></label>
@@ -110,7 +117,9 @@ function release(transport) {
   return Promise.race([transport.disconnect().catch(() => {}), new Promise((ok) => setTimeout(ok, 2000))]);
 }
 
-async function write(data, address, what) {
+async function write(data, address, what) { await writeAll([{ data, address }], what); }
+
+async function writeAll(parts, what) {
   if (!serial) throw new Error("this browser cannot reach USB devices");
   const port = await serial.requestPort();
   const transport = new Transport(port, true);
@@ -119,9 +128,9 @@ async function write(data, address, what) {
        baud change needs hangs over WebUSB on Android. Stay at the ROM's 115200. */
     const loader = new ESPLoader({ transport, baudrate: 115200, terminal });
     log(`Connecting (${await loader.main()})\n`);
-    log(`Writing ${what}: ${data.length} bytes at ${hex(address)}\n`);
+    for (const { data, address } of parts) log(`Writing ${what}: ${data.length} bytes at ${hex(address)}\n`);
     await loader.writeFlash({
-      fileArray: [{ data: loader.ui8ToBstr(data), address }],
+      fileArray: parts.map(({ data, address }) => ({ data: loader.ui8ToBstr(data), address })),
       flashSize: "keep", flashMode: "keep", flashFreq: "keep", eraseAll: false, compress: true,
       reportProgress: (i, written, total) => { $("bar").value = 100 * written / total; },
     });
@@ -155,7 +164,56 @@ async function backup() {
   }
 }
 
-function setBusy(on) { for (const id of ["flash", "upload", "backup", "restore"]) $(id).disabled = on; }
+/* Saves file: 32 byte header (magic "GBSAVES1", version 1, then offset and size of the save and the state region,
+   little endian words), the save region, the state region. */
+const SAVES_MAGIC = "GBSAVES1";
+const regions = () => [offsets.save, offsets.state];
+
+async function savesDownload() {
+  if (!serial) throw new Error("this browser cannot reach USB devices");
+  const [sv, st] = regions();
+  const port = await serial.requestPort();
+  const transport = new Transport(port, true);
+  try {
+    const loader = new ESPLoader({ transport, baudrate: 115200, terminal });
+    log(`Connecting (${await loader.main()})\n`);
+    const out = new Uint8Array(32 + sv.size + st.size);
+    const dv = new DataView(out.buffer);
+    out.set(new TextEncoder().encode(SAVES_MAGIC), 0);
+    [1, sv.offset, sv.size, st.offset, st.size].forEach((v, i) => dv.setUint32(8 + 4 * i, v, true));
+    let at = 32, done = 0;
+    for (const r of [sv, st]) {
+      log(`Reading ${r.size} bytes at ${hex(r.offset)}\n`);
+      const d = await loader.readFlash(r.offset, r.size, (packet, got) => { $("bar").value = 100 * (done + got) / (sv.size + st.size); });
+      if (d.length !== r.size) throw new Error(`short read: ${d.length} bytes`);
+      out.set(d, at);
+      at += r.size;
+      done += r.size;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out], { type: "application/octet-stream" }));
+    a.download = `trmnl-og-gameboy-saves-${new Date().toISOString().slice(0, 10)}.bin`;
+    a.click();
+    await loader.after("hard_reset");
+    log(`Done: saves in ${a.download}, device restarted.\n`);
+  } finally {
+    await release(transport);
+  }
+}
+
+/* Returns the two regions of a saves file, or throws what is wrong with it. */
+function savesParse(data) {
+  const [sv, st] = regions();
+  if (data.length !== 32 + sv.size + st.size) throw new Error(`a saves file is ${32 + sv.size + st.size} bytes, this one has ${data.length}`);
+  if (new TextDecoder().decode(data.subarray(0, 8)) !== SAVES_MAGIC) throw new Error("not a saves file from this page");
+  const dv = new DataView(data.buffer, data.byteOffset);
+  const want = [1, sv.offset, sv.size, st.offset, st.size];
+  if (want.some((v, i) => dv.getUint32(8 + 4 * i, true) !== v)) throw new Error("the file is from another firmware layout (offsets or sizes differ)");
+  return [{ data: data.slice(32, 32 + sv.size), address: sv.offset },
+          { data: data.slice(32 + sv.size), address: st.offset }];
+}
+
+function setBusy(on) { for (const id of ["flash", "upload", "backup", "restore", "stdown", "stup", "stclear"]) $(id).disabled = on; }
 
 async function run(fn) {
   setBusy(true);
@@ -222,6 +280,26 @@ $("restore").onclick = () => run(async () => {
   if (data[0] !== 0xe9) throw new Error("not a device backup (first byte is not 0xE9)");
   if (!confirm("Replace everything on the device with this backup?")) return;
   await write(data, 0, "backup");
+});
+
+$("stdown").onclick = () => run(async () => {
+  if (!offsets?.state) throw new Error("offsets.json has no state partition: run 'make web'");
+  await savesDownload();
+});
+
+$("stup").onclick = () => run(async () => {
+  if (!offsets?.state) throw new Error("offsets.json has no state partition: run 'make web'");
+  const f = $("stfile").files[0];
+  if (!f) throw new Error("choose a saves file first");
+  const parts = savesParse(new Uint8Array(await f.arrayBuffer()));
+  if (!confirm("Replace the saves on the device with this file?")) return;
+  await writeAll(parts, "saves");
+});
+
+$("stclear").onclick = () => run(async () => {
+  if (!offsets?.state) throw new Error("offsets.json has no state partition: run 'make web'");
+  if (!confirm("Erase the battery save and all save states on the device? The game starts fresh.")) return;
+  await writeAll(regions().map((r) => ({ data: new Uint8Array(r.size).fill(0xff), address: r.offset })), "empty saves");
 });
 
 $("upload").onclick = () => run(async () => {
