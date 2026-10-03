@@ -11,4 +11,8 @@ void pad_init(void);
 uint8_t pad_buttons(void);
 /* True while a controller sends reports. */
 bool pad_connected(void);
+/* For the status log line: where the pad code is ("off", "scan", "link", "pair", "setup", "on"), adverts seen,
+ * gamepad adverts among them, and the last error code (0 none). */
+const char *pad_state(void);
+void pad_counts(uint32_t *adv, uint32_t *pads, int *err);
 #endif

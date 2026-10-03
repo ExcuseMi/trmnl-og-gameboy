@@ -157,6 +157,13 @@ static void emu_task(void *arg)
                    (unsigned)(n_emu - last_emu), (unsigned)(n_panel - last_panel), (unsigned)partial_ms,
                    CONFIG_GB_FULL_EVERY, (unsigned)esp_get_free_heap_size(),
                    (unsigned)esp_get_minimum_free_heap_size());
+#ifdef CONFIG_GB_PAD_BLE
+            uint32_t adv, pads;
+            int perr;
+            pad_counts(&adv, &pads, &perr);
+            printf("pad state=%s adverts=%u gamepads=%u err=%d buttons=0x%02x\n", pad_state(), (unsigned)adv,
+                   (unsigned)pads, perr, pad_buttons());
+#endif
             last_emu = n_emu;
             last_panel = n_panel;
             stat += 1000000;

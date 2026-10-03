@@ -29,6 +29,9 @@ static uint16_t cccd[MAX_CCCD];
 static int n_cccd, i_cccd;
 static ble_addr_t peer, skip;
 static int64_t skip_until;
+static const char *volatile g_state = "off";
+static volatile uint32_t n_adv, n_pad;
+static volatile int g_err;
 
 static int gap_event(struct ble_gap_event *ev, void *arg);
 
@@ -36,7 +39,11 @@ static void scan_start(void)
 {
     struct ble_gap_disc_params p = { .itvl = 0x60, .window = 0x30, .passive = 0 } /* active: the name is in the scan response */;
     int rc = ble_gap_disc(own_addr_type, BLE_HS_FOREVER, &p, gap_event, NULL);
-    if (rc && rc != BLE_HS_EALREADY) printf("pad error=scan rc=%d\n", rc);
+    g_state = "scan";
+    if (rc && rc != BLE_HS_EALREADY) {
+        g_err = rc;
+        printf("pad error=scan rc=%d\n", rc);
+    }
 }
 
 static bool bonded(const ble_addr_t *a)
@@ -53,6 +60,7 @@ static bool bonded(const ble_addr_t *a)
 static void give_up(uint16_t conn, const char *why, int rc)
 {
     printf("pad error=%s rc=%d\n", why, rc);
+    g_err = rc;
     skip = peer;
     skip_until = esp_timer_get_time() + SKIP_US;
     ble_gap_terminate(conn, BLE_ERR_REM_USER_CONN_TERM);
@@ -79,6 +87,7 @@ static void subscribe_next(uint16_t conn)
         return;
     }
     g_connected = true;
+    g_state = "on";
     printf("pad connected reports=%d\n", n_cccd);
 }
 
@@ -144,33 +153,40 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
     int rc;
     switch (ev->type) {
     case BLE_GAP_EVENT_DISC:
+        n_adv++;
         if (!wanted(&ev->disc)) return 0;
+        n_pad++;
         peer = ev->disc.addr;
         ble_gap_disc_cancel();
         rc = ble_gap_connect(own_addr_type, &peer, 10000, NULL, gap_event, NULL);
         if (rc) {
+            g_err = rc;
             printf("pad error=connect rc=%d\n", rc);
             scan_start();
         }
         return 0;
     case BLE_GAP_EVENT_CONNECT:
         if (ev->connect.status) {
+            g_err = ev->connect.status;
             scan_start();
             return 0;
         }
         printf("pad link %02x:%02x:%02x:%02x:%02x:%02x\n", peer.val[5], peer.val[4], peer.val[3], peer.val[2],
                peer.val[1], peer.val[0]);
         hid_start = hid_end = 0;
+        g_state = "pair";
         rc = ble_gap_security_initiate(ev->connect.conn_handle);
         if (rc) give_up(ev->connect.conn_handle, "security", rc);
         return 0;
     case BLE_GAP_EVENT_ENC_CHANGE:
         if (ev->enc_change.status) {
             forget(ev->enc_change.conn_handle); /* e.g. the pad lost its bond: pair again next time */
+            g_err = ev->enc_change.status;
             printf("pad error=pairing rc=%d\n", ev->enc_change.status);
             ble_gap_terminate(ev->enc_change.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             return 0;
         }
+        g_state = "setup";
         rc = ble_gattc_disc_svc_by_uuid(ev->enc_change.conn_handle, BLE_UUID16_DECLARE(UUID_HID), on_svc, NULL);
         if (rc) give_up(ev->enc_change.conn_handle, "discover", rc);
         return 0;
@@ -208,6 +224,7 @@ static void on_sync(void)
     int rc = ble_hs_util_ensure_addr(0);
     if (!rc) rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc) {
+        g_err = rc;
         printf("pad error=address rc=%d\n", rc);
         return;
     }
@@ -245,6 +262,7 @@ void pad_init(void)
     }
     if (!e) e = nimble_port_init();
     if (e) {
+        g_err = (int)e;
         printf("pad error=init rc=%d\n", (int)e);
         return;
     }
@@ -263,3 +281,10 @@ void pad_init(void)
 
 uint8_t pad_buttons(void) { return g_buttons; }
 bool pad_connected(void) { return g_connected; }
+const char *pad_state(void) { return g_state; }
+void pad_counts(uint32_t *adv, uint32_t *pads, int *err)
+{
+    *adv = n_adv;
+    *pads = n_pad;
+    *err = g_err;
+}

@@ -17,19 +17,23 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 
-# BLE gamepad: NimBLE host, central + observer only, one connection, bonds in NVS. Trimmed for RAM and flash.
+# BLE gamepad: NimBLE host, central + observer only, one connection, bonds in NVS.
+# First hardware run (Xbox pad, 2026-10-03): the receive pool ran empty right after the link ("ACL buf alloc failed",
+# "MBUF alloc stuck"), the GATT discovery then timed out. So: host flow control (the controller holds the pad back
+# while the host is busy, e.g. with the pairing maths), a larger receive pool, and the GATT server and default
+# msys pool back (the pad queries the central too). Heap had 108 KB free, so there is room.
+CONFIG_BT_NIMBLE_HS_FLOW_CTRL=y
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_FROM_LL_COUNT=48
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
-CONFIG_BT_NIMBLE_GATT_SERVER=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_MAX_BONDS=2
 CONFIG_BT_NIMBLE_MAX_CCCDS=2
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
-CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 CONFIG_BT_CTRL_BLE_MAX_ACT=3
