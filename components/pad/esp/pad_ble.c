@@ -32,6 +32,8 @@ static int64_t skip_until;
 static const char *volatile g_state = "off";
 static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
+static volatile uint32_t n_link, n_rescan;
+static volatile int g_disc; /* reason of the last disconnect */
 
 static int gap_event(struct ble_gap_event *ev, void *arg);
 
@@ -174,6 +176,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         printf("pad link %02x:%02x:%02x:%02x:%02x:%02x\n", peer.val[5], peer.val[4], peer.val[3], peer.val[2],
                peer.val[1], peer.val[0]);
         hid_start = hid_end = 0;
+        n_link++;
         g_state = "pair";
         rc = ble_gap_security_initiate(ev->connect.conn_handle);
         if (rc) give_up(ev->connect.conn_handle, "security", rc);
@@ -208,6 +211,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         g_connected = false;
         g_buttons = 0;
+        g_disc = ev->disconnect.reason;
         printf("pad disconnected reason=%d\n", ev->disconnect.reason);
         scan_start();
         return 0;
@@ -281,7 +285,31 @@ void pad_init(void)
 
 uint8_t pad_buttons(void) { return g_buttons; }
 bool pad_connected(void) { return g_connected; }
-const char *pad_state(void) { return g_state; }
+/* Called once a second for the status line. Also the scan watchdog: seen on hardware, the advert count stood still
+ * in state "scan" after one gamepad advert (a connect attempt that never reported back), so after 5 s without an
+ * advert the pending connect and the scan are cancelled and the scan starts again. */
+const char *pad_state(void)
+{
+    static char text[64];
+    static uint32_t seen;
+    static int still;
+    const char *st = g_state;
+    if (!g_connected && !strcmp(st, "scan")) {
+        if (n_adv != seen) still = 0;
+        else if (++still >= 5) {
+            still = 0;
+            n_rescan++;
+            ble_gap_conn_cancel();
+            ble_gap_disc_cancel();
+            scan_start();
+        }
+    } else {
+        still = 0;
+    }
+    seen = n_adv;
+    snprintf(text, sizeof text, "%s links=%u disc=%d rescans=%u", st, (unsigned)n_link, g_disc, (unsigned)n_rescan);
+    return text;
+}
 void pad_counts(uint32_t *adv, uint32_t *pads, int *err)
 {
     *adv = n_adv;
