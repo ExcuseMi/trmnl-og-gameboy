@@ -15,6 +15,8 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "nvs_flash.h"
+#include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
 #include "xbox_report.h"
 
 #define UUID_HID 0x1812
@@ -463,6 +465,11 @@ void pad_init(void)
     ble_hs_cfg.sm_sc = 0; /* legacy pairing, as the Xbox host libraries that work use (bond, no MITM, no SC) */
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    /* The gamepad is a GATT client too and sends us requests. Without the GATT server NimBLE drops each one
+     * unanswered and never frees its buffer; after 24 the receive pool is empty and no report arrives. */
+    ble_svc_gap_init();
+    ble_svc_gatt_init();
+    ble_svc_gap_device_name_set("TRMNL Game Boy");
     ble_store_config_init();
     nimble_port_freertos_init(host_task);
 }
