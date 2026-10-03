@@ -3,10 +3,13 @@
  * Log lines over USB: pad scanning / link / connected / report buttons=.. / disconnected. C11.
  * SPDX-License-Identifier: GPL-3.0-or-later */
 #include "pad.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "esp_bt.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -38,6 +41,26 @@ static volatile uint32_t n_adv, n_pad;
 static volatile int g_err;
 static volatile uint32_t n_link, n_rescan;
 static volatile uint32_t n_notif, n_reset;
+static volatile uint32_t n_ev;  /* GAP events handled: stands still if the host task hangs */
+static volatile int g_evt = -1; /* type of the last GAP event */
+
+/* The host task never prints: a blocking console write there holds up the Bluetooth host (seen on hardware as a
+ * receive pool that ran empty). Lines go into a small ring, the status call (emulator task) prints them. */
+#define EV_N 16
+static char evlog[EV_N][80];
+static volatile uint8_t ev_w, ev_r;
+
+static void evf(const char *fmt, ...)
+{
+    char *line = evlog[ev_w % EV_N];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof evlog[0], fmt, ap);
+    va_end(ap);
+    if (n >= (int)sizeof evlog[0]) n = sizeof evlog[0] - 1;
+    if (n > 0 && line[n - 1] == '\n') line[n - 1] = 0;
+    ev_w++;
+}
 static char g_peer[24] = "-"; /* end of the address and RSSI of the device last connected to */
 static volatile unsigned g_len; /* length of the last notification */
 static volatile int g_disc; /* reason of the last disconnect */
@@ -51,7 +74,7 @@ static void scan_start(void)
     g_state = "scan";
     if (rc && rc != BLE_HS_EALREADY) {
         g_err = rc;
-        printf("pad error=scan rc=%d\n", rc);
+        evf("pad error=scan rc=%d\n", rc);
     }
 }
 
@@ -68,7 +91,7 @@ static bool bonded(const ble_addr_t *a)
 /* Not a usable pad: drop the link and look elsewhere for a while. */
 static void give_up(uint16_t conn, const char *why, int rc)
 {
-    printf("pad error=%s rc=%d\n", why, rc);
+    evf("pad error=%s rc=%d\n", why, rc);
     g_err = rc;
     skip = peer;
     skip_until = esp_timer_get_time() + SKIP_US;
@@ -83,7 +106,7 @@ static int on_sub(uint16_t conn, const struct ble_gatt_error *err, struct ble_ga
     (void)arg;
     if (err->status) {
         g_err = err->status;
-        printf("pad error=subscribe handle=%u rc=%d\n", cccd[i_cccd], err->status);
+        evf("pad error=subscribe handle=%u rc=%d\n", cccd[i_cccd], err->status);
     }
     i_cccd++;
     subscribe_next(conn);
@@ -100,7 +123,7 @@ static void subscribe_next(uint16_t conn)
     }
     g_connected = true;
     g_state = "on";
-    printf("pad connected reports=%d\n", n_cccd);
+    evf("pad connected reports=%d\n", n_cccd);
 }
 
 static int on_dsc(uint16_t conn, const struct ble_gatt_error *err, uint16_t chr_val_handle,
@@ -131,7 +154,7 @@ static int on_read(uint16_t conn, const struct ble_gatt_error *err, struct ble_g
     (void)attr;
     (void)arg;
     if (err->status == 0) return 0; /* a part of a long value; BLE_HS_EDONE follows */
-    if (err->status != BLE_HS_EDONE) printf("pad read handle=%u rc=%d\n", rd[i_rd], err->status);
+    if (err->status != BLE_HS_EDONE) evf("pad read handle=%u rc=%d\n", rd[i_rd], err->status);
     i_rd++;
     read_next(conn);
     return 0;
@@ -156,7 +179,7 @@ static int on_chr(uint16_t conn, const struct ble_gatt_error *err, const struct 
         return 0;
     }
     if (err->status == BLE_HS_EDONE) {
-        printf("pad hid readable=%d\n", n_rd);
+        evf("pad hid readable=%d\n", n_rd);
         i_rd = 0;
         read_next(conn);
     } else {
@@ -207,6 +230,8 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
 {
     (void)arg;
     int rc;
+    n_ev++;
+    g_evt = ev->type;
     switch (ev->type) {
     case BLE_GAP_EVENT_DISC:
         n_adv++;
@@ -222,7 +247,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
                 memcpy(name, f.name, n);
                 name[n] = 0;
             }
-            printf("pad found %02x:%02x:%02x:%02x:%02x:%02x rssi=%d bonded=%d name='%s'\n", peer.val[5], peer.val[4],
+            evf("pad found %02x:%02x:%02x:%02x:%02x:%02x rssi=%d bonded=%d name='%s'\n", peer.val[5], peer.val[4],
                    peer.val[3], peer.val[2], peer.val[1], peer.val[0], ev->disc.rssi, bonded(&peer), name);
             snprintf(g_peer, sizeof g_peer, "%02x%02x%02x rssi=%d", peer.val[2], peer.val[1], peer.val[0],
                      ev->disc.rssi);
@@ -231,7 +256,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         rc = ble_gap_connect(own_addr_type, &peer, 10000, NULL, gap_event, NULL);
         if (rc) {
             g_err = rc;
-            printf("pad error=connect rc=%d\n", rc);
+            evf("pad error=connect rc=%d\n", rc);
             scan_start();
         }
         return 0;
@@ -241,14 +266,14 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
             scan_start();
             return 0;
         }
-        printf("pad link %02x:%02x:%02x:%02x:%02x:%02x\n", peer.val[5], peer.val[4], peer.val[3], peer.val[2],
+        evf("pad link %02x:%02x:%02x:%02x:%02x:%02x\n", peer.val[5], peer.val[4], peer.val[3], peer.val[2],
                peer.val[1], peer.val[0]);
         hid_start = hid_end = 0;
         n_link++;
         {
             int8_t rssi = 0;
             ble_gap_conn_rssi(ev->connect.conn_handle, &rssi);
-            printf("pad rssi=%d\n", rssi);
+            evf("pad rssi=%d\n", rssi);
         }
         g_state = "pair";
         rc = ble_gap_security_initiate(ev->connect.conn_handle);
@@ -258,7 +283,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         if (ev->enc_change.status) {
             forget(ev->enc_change.conn_handle); /* e.g. the pad lost its bond: pair again next time */
             g_err = ev->enc_change.status;
-            printf("pad error=pairing rc=%d\n", ev->enc_change.status);
+            evf("pad error=pairing rc=%d\n", ev->enc_change.status);
             ble_gap_terminate(ev->enc_change.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
             return 0;
         }
@@ -280,15 +305,16 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         bool ok = xbox_parse(d, n, &r);
         /* the first reports raw, and later ones the parser refuses now and then: the format is checked on hardware */
         if (n_notif <= 4 || (!ok && n_notif % 200 == 0)) {
-            printf("pad raw handle=%u len=%u ok=%d", ev->notify_rx.attr_handle, n, ok);
-            for (int i = 0; i < n; i++) printf(" %02x", d[i]);
-            printf("\n");
+            char line[72];
+            int o = snprintf(line, sizeof line, "pad raw handle=%u len=%u ok=%d", ev->notify_rx.attr_handle, n, ok);
+            for (int i = 0; i < n && o < (int)sizeof line - 3; i++) o += snprintf(line + o, sizeof line - o, " %02x", d[i]);
+            evf("%s", line);
         }
         if (!ok) return 0;
         uint8_t b = xbox_to_gb(&r);
         if (b != g_buttons) {
             g_buttons = b;
-            printf("pad report buttons=0x%02x\n", b);
+            evf("pad report buttons=0x%02x\n", b);
         }
         return 0;
     }
@@ -296,7 +322,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
         g_connected = false;
         g_buttons = 0;
         g_disc = ev->disconnect.reason;
-        printf("pad disconnected reason=%d\n", ev->disconnect.reason);
+        evf("pad disconnected reason=%d\n", ev->disconnect.reason);
         scan_start();
         return 0;
     case BLE_GAP_EVENT_DISC_COMPLETE:
@@ -313,7 +339,7 @@ static void on_sync(void)
     if (!rc) rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc) {
         g_err = rc;
-        printf("pad error=address rc=%d\n", rc);
+        evf("pad error=address rc=%d\n", rc);
         return;
     }
     /* Bonds made before the firmware connected to gamepads only may be with another HID device: drop them once. */
@@ -324,15 +350,15 @@ static void on_sync(void)
             ble_store_clear();
             nvs_set_u8(h, "bondv", 3);
             nvs_commit(h);
-            printf("pad bonds cleared\n");
+            evf("pad bonds cleared\n");
         }
         nvs_close(h);
     }
-    printf("pad scanning\n");
+    evf("pad scanning\n");
     scan_start();
 }
 
-static void on_reset(int reason) { printf("pad error=host reset reason=%d\n", reason); }
+static void on_reset(int reason) { evf("pad error=host reset reason=%d\n", reason); }
 
 static void host_task(void *arg)
 {
@@ -352,7 +378,7 @@ void pad_init(void)
     if (!e) esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9); /* +9 dBm, as the working Xbox hosts */
     if (e) {
         g_err = (int)e;
-        printf("pad error=init rc=%d\n", (int)e);
+        evf("pad error=init rc=%d\n", (int)e);
         return;
     }
     ble_hs_cfg.sync_cb = on_sync;
@@ -394,6 +420,13 @@ const char *pad_state(void)
         still = 0;
     }
     seen = n_adv;
+    while (ev_r != ev_w) printf("%s\n", evlog[ev_r++ % EV_N]);
+    {
+        static TaskHandle_t host;
+        if (!host) host = xTaskGetHandle("nimble_host");
+        printf("pad host events=%u last=%d stack_free=%u\n", (unsigned)n_ev, g_evt,
+               host ? (unsigned)uxTaskGetStackHighWaterMark(host) : 0);
+    }
     snprintf(text, sizeof text, "%s peer=%s links=%u disc=%d rescans=%u notif=%u len=%u", st, g_peer, (unsigned)n_link,
              g_disc, (unsigned)n_rescan, (unsigned)n_notif, g_len);
     return text;
