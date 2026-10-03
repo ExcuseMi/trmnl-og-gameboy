@@ -97,7 +97,9 @@ async function write(data, address, what) {
   const port = await serial.requestPort();
   const transport = new Transport(port, true);
   try {
-    const loader = new ESPLoader({ transport, baudrate: 460800, terminal });
+    /* The OG's USB is native (no UART bridge): the baud rate changes nothing, and the port reopen that a
+       baud change needs hangs over WebUSB on Android. Stay at the ROM's 115200. */
+    const loader = new ESPLoader({ transport, baudrate: 115200, terminal });
     log(`Connecting (${await loader.main()})\n`);
     log(`Writing ${what}: ${data.length} bytes at ${hex(address)}\n`);
     await loader.writeFlash({
