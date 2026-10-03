@@ -1,6 +1,6 @@
 /* Game Boy on the TRMNL OG e-paper: emulator task paced at 59.7 Hz, panel task pushing changed rows as fast as the
  * panel allows. Log line each second: gb fps_emu=.. fps_panel=.. partial_ms=.. full_every=.. heap_free=.. heap_min=..
- * Without a connected gamepad a hint line stands under the picture.
+ * Without a connected gamepad a hint line stands above the picture.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdio.h>
 #include <string.h>
@@ -84,7 +84,7 @@ static void panel_task(void *arg)
     int partials = 0;
     bool first = true, hint = false;
     for (;;) {
-        /* rows under the picture: the emulator never draws there, so this task may */
+        /* rows above the picture: the emulator never draws there, so this task may */
         bool want = PAD_BLE && !pad_connected();
         if (want != hint) {
             tiny_rect_t lr;
