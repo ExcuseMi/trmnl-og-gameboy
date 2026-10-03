@@ -5,3 +5,4 @@ sdkconfig.old
 *.gb
 *.gbc
 .claude/
+tools/host/gb_host
