@@ -1,0 +1,40 @@
+# Builds the firmware and publishes tools/web with the merged image and offsets.json to GitHub Pages, so
+# https://excusemi.github.io/trmnl-og-gameboy/ can flash without a local file.
+name: pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.5.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . "$IDF_PATH/export.sh" >/dev/null
+          tools/idf/build.sh
+          python3 tools/part_offset.py partitions.csv --json > tools/web/offsets.json
+          cp build/dist/gameboy-merged.bin tools/web/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: tools/web
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

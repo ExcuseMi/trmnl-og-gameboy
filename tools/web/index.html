@@ -1,0 +1,135 @@
+<!doctype html>
+<!-- Flash the firmware and upload a ROM over USB from the browser (Web Serial: Chrome or Edge). No build step.
+     Offsets: offsets.json (make web, from partitions.csv). SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRMNL OG Game Boy: flash and ROM upload</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; color: #111; }
+  h1 { font-size: 1.4rem; }
+  section { border: 1px solid #bbb; border-radius: 8px; padding: 0.8rem 1rem; margin: 1rem 0; }
+  button { font: inherit; padding: 0.5rem 1rem; margin-top: 0.5rem; cursor: pointer; }
+  button:disabled { cursor: default; }
+  label { display: block; margin: 0.3rem 0; }
+  progress { width: 100%; }
+  pre { background: #f3f3f3; padding: 0.6rem; height: 12rem; overflow: auto; font-size: 0.8rem; white-space: pre-wrap; }
+  .warn { color: #a00; }
+  small { color: #555; }
+</style>
+</head>
+<body>
+<h1>TRMNL OG Game Boy</h1>
+<p>Connect the TRMNL OG with a USB cable. <span id="nousb" class="warn" hidden>This browser has no Web Serial: use
+Chrome or Edge on a computer.</span></p>
+
+<section>
+  <b>1. Firmware</b> <small id="fwinfo"></small>
+  <label>Local file instead (gameboy-merged.bin): <input type="file" id="fwfile" accept=".bin"></label>
+  <button id="flash">Flash firmware</button>
+</section>
+
+<section>
+  <b>2. Game</b> <small id="rominfo"></small>
+  <label>ROM file (.gb), a game you own: <input type="file" id="romfile" accept=".gb,.gbc,.bin"></label>
+  <button id="upload">Upload ROM</button>
+</section>
+
+<progress id="bar" value="0" max="100"></progress>
+<pre id="log"></pre>
+<p><small>The ROM never leaves your computer: it goes from this page straight to the device. The save game on the
+device stays when you flash the firmware or upload a ROM.</small></p>
+
+<script type="module">
+import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.5.7/bundle.js";
+
+const $ = (id) => document.getElementById(id);
+const hex = (n) => "0x" + n.toString(16);
+const log = (s) => { $("log").textContent += s; $("log").scrollTop = $("log").scrollHeight; };
+const terminal = { clean() {}, writeLine: (s) => log(s + "\n"), write: (s) => log(s) };
+let offsets = null, hosted = false;
+
+if (!("serial" in navigator)) $("nousb").hidden = false;
+
+async function init() {
+  try {
+    offsets = await (await fetch("offsets.json", { cache: "no-store" })).json();
+  } catch (e) {
+    log("offsets.json is missing: run 'make web' in the repository.\n");
+    return;
+  }
+  $("rominfo").textContent = `at ${hex(offsets.rom.offset)}, up to ${offsets.rom.size / 1024} KB`;
+  try {
+    const r = await fetch(offsets.firmware.file, { method: "HEAD", cache: "no-store" });
+    hosted = r.ok;
+  } catch (e) { hosted = false; }
+  $("fwinfo").textContent = hosted ? "the latest build is on this page; no file needed"
+                                   : "no build on this page: choose the file from make build";
+}
+
+/* Returns an error text, or null if the ROM fits. */
+function romProblem(size) {
+  if (size > offsets.rom.size) return `ROM is ${size} bytes, the rom partition holds ${offsets.rom.size}.`;
+  if (size < 0x8000) return "File is smaller than 32 KB: not a Game Boy ROM.";
+  return null;
+}
+window.romProblem = romProblem;
+
+async function write(data, address, what) {
+  const port = await navigator.serial.requestPort();
+  const transport = new Transport(port, true);
+  try {
+    const loader = new ESPLoader({ transport, baudrate: 460800, terminal });
+    log(`Connecting (${await loader.main()})\n`);
+    log(`Writing ${what}: ${data.length} bytes at ${hex(address)}\n`);
+    await loader.writeFlash({
+      fileArray: [{ data: loader.ui8ToBstr(data), address }],
+      flashSize: "keep", flashMode: "keep", flashFreq: "keep", eraseAll: false, compress: true,
+      reportProgress: (i, written, total) => { $("bar").value = 100 * written / total; },
+    });
+    await loader.after("hard_reset");
+    log(`Done: ${what} written, device restarted.\n`);
+  } finally {
+    await transport.disconnect().catch(() => {});
+  }
+}
+
+async function run(fn) {
+  $("flash").disabled = $("upload").disabled = true;
+  $("bar").value = 0;
+  try { await fn(); } catch (e) { log(`Error: ${e.message || e}\n`); }
+  $("flash").disabled = $("upload").disabled = false;
+}
+
+$("flash").onclick = () => run(async () => {
+  if (!offsets) throw new Error("offsets.json is missing");
+  const f = $("fwfile").files[0];
+  let data;
+  if (f) {
+    data = new Uint8Array(await f.arrayBuffer());
+  } else if (hosted) {
+    const r = await fetch(offsets.firmware.file, { cache: "no-store" });
+    if (!r.ok) throw new Error("firmware download failed: " + r.status);
+    data = new Uint8Array(await r.arrayBuffer());
+  } else {
+    throw new Error("choose the firmware file first");
+  }
+  if (data[0] !== 0xe9) throw new Error("not a merged ESP image (first byte is not 0xE9)");
+  if (data.length > offsets.rom.offset) throw new Error("image reaches into the rom partition");
+  await write(data, offsets.firmware.offset, "firmware");
+});
+
+$("upload").onclick = () => run(async () => {
+  if (!offsets) throw new Error("offsets.json is missing");
+  const f = $("romfile").files[0];
+  if (!f) throw new Error("choose a ROM file first");
+  const bad = romProblem(f.size);
+  if (bad) throw new Error(bad);
+  await write(new Uint8Array(await f.arrayBuffer()), offsets.rom.offset, "ROM");
+});
+
+init();
+</script>
+</body>
+</html>

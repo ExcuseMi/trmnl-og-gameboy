@@ -1,0 +1,14 @@
+{
+ "firmware": {
+  "offset": 0,
+  "file": "gameboy-merged.bin"
+ },
+ "rom": {
+  "offset": 1638400,
+  "size": 1048576
+ },
+ "save": {
+  "offset": 2686976,
+  "size": 65536
+ }
+}
