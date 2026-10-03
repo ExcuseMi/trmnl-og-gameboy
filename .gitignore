@@ -6,3 +6,4 @@ sdkconfig.old
 *.gbc
 .claude/
 tools/host/gb_host
+.venv/

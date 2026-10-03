@@ -1,0 +1,4 @@
+# 4 MB. rom: raw .gb file written by tools/load_rom.sh, memory-mapped by the app (64 KiB aligned).
+# Name, Type, SubType, Offset,   Size
+factory, app,  factory, 0x10000,  0x180000
+rom,     data, 0x40,    0x190000, 0x100000

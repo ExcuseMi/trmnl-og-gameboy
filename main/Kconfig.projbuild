@@ -1,0 +1,12 @@
+menu "Game Boy"
+    config GB_EPD_GEN2
+        bool "Panel is the GEN2 variant (GEDY075-D2)"
+        default n
+    config GB_FULL_EVERY
+        int "Full refresh after this many partial refreshes"
+        default 20
+        range 1 1000
+    config GB_START_HOLD_MS
+        int "Hold the button this long for Start"
+        default 1000
+endmenu
