@@ -27,6 +27,9 @@ static volatile bool g_connected;
 static uint16_t hid_start, hid_end;
 static uint16_t cccd[MAX_CCCD];
 static int n_cccd, i_cccd;
+#define MAX_CHR 16
+static uint16_t rd[MAX_CHR]; /* value handles of the readable characteristics of the HID service */
+static int n_rd, i_rd;
 static ble_addr_t peer, skip;
 static int64_t skip_until;
 static const char *volatile g_state = "off";
@@ -76,7 +79,10 @@ static int on_sub(uint16_t conn, const struct ble_gatt_error *err, struct ble_ga
 {
     (void)attr;
     (void)arg;
-    if (err->status) printf("pad error=subscribe handle=%u rc=%d\n", cccd[i_cccd], err->status);
+    if (err->status) {
+        g_err = err->status;
+        printf("pad error=subscribe handle=%u rc=%d\n", cccd[i_cccd], err->status);
+    }
     i_cccd++;
     subscribe_next(conn);
     return 0;
@@ -113,6 +119,50 @@ static int on_dsc(uint16_t conn, const struct ble_gatt_error *err, uint16_t chr_
     return 0;
 }
 
+/* The Xbox pad sends no reports until the readable characteristics of its HID service (report map, HID information,
+ * reports) were read once: seen on hardware (subscribed, zero notifications) and in asukiaaa's
+ * XboxSeriesXControllerESP32 ("Reading value is required for subscribe"). So: read them all, then subscribe. */
+static void read_next(uint16_t conn);
+
+static int on_read(uint16_t conn, const struct ble_gatt_error *err, struct ble_gatt_attr *attr, void *arg)
+{
+    (void)attr;
+    (void)arg;
+    if (err->status == 0) return 0; /* a part of a long value; BLE_HS_EDONE follows */
+    if (err->status != BLE_HS_EDONE) printf("pad read handle=%u rc=%d\n", rd[i_rd], err->status);
+    i_rd++;
+    read_next(conn);
+    return 0;
+}
+
+static void read_next(uint16_t conn)
+{
+    while (i_rd < n_rd) {
+        if (!ble_gattc_read_long(conn, rd[i_rd], 0, on_read, NULL)) return;
+        i_rd++;
+    }
+    n_cccd = 0;
+    int rc = ble_gattc_disc_all_dscs(conn, hid_start, hid_end, on_dsc, NULL);
+    if (rc) give_up(conn, "descriptors", rc);
+}
+
+static int on_chr(uint16_t conn, const struct ble_gatt_error *err, const struct ble_gatt_chr *chr, void *arg)
+{
+    (void)arg;
+    if (err->status == 0) {
+        if ((chr->properties & BLE_GATT_CHR_PROP_READ) && n_rd < MAX_CHR) rd[n_rd++] = chr->val_handle;
+        return 0;
+    }
+    if (err->status == BLE_HS_EDONE) {
+        printf("pad hid readable=%d\n", n_rd);
+        i_rd = 0;
+        read_next(conn);
+    } else {
+        give_up(conn, "characteristics", err->status);
+    }
+    return 0;
+}
+
 static int on_svc(uint16_t conn, const struct ble_gatt_error *err, const struct ble_gatt_svc *svc, void *arg)
 {
     (void)arg;
@@ -123,8 +173,8 @@ static int on_svc(uint16_t conn, const struct ble_gatt_error *err, const struct 
     }
     int rc = err->status;
     if (rc == BLE_HS_EDONE && hid_end) {
-        n_cccd = 0;
-        rc = ble_gattc_disc_all_dscs(conn, hid_start, hid_end, on_dsc, NULL);
+        n_rd = 0;
+        rc = ble_gattc_disc_all_chrs(conn, hid_start, hid_end, on_chr, NULL);
         if (!rc) return 0;
     }
     give_up(conn, "no hid service", rc);
@@ -249,9 +299,9 @@ static void on_sync(void)
     nvs_handle_t h;
     if (!nvs_open("gb", NVS_READWRITE, &h)) {
         uint8_t v = 0;
-        if (nvs_get_u8(h, "bondv", &v) || v != 2) {
+        if (nvs_get_u8(h, "bondv", &v) || v != 3) { /* 3: legacy pairing */
             ble_store_clear();
-            nvs_set_u8(h, "bondv", 2);
+            nvs_set_u8(h, "bondv", 3);
             nvs_commit(h);
             printf("pad bonds cleared\n");
         }
@@ -289,7 +339,7 @@ void pad_init(void)
     ble_hs_cfg.sm_io_cap = BLE_HS_IO_NO_INPUT_OUTPUT; /* Just Works */
     ble_hs_cfg.sm_bonding = 1;
     ble_hs_cfg.sm_mitm = 0;
-    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_sc = 0; /* legacy pairing, as the Xbox host libraries that work use (bond, no MITM, no SC) */
     ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
     ble_store_config_init();
