@@ -10,3 +10,4 @@ tools/host/gb_host
 build-qemu/
 build-qemu.log
 tools/host/test_save
+tools/host/test_xbox

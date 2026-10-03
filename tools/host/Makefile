@@ -8,7 +8,10 @@ check: gb_host
 	./gb_host ../../tests/roms/dmg-acid2.gb ../../docs/acid2 120 60 120
 test_save: test_save.c ../../components/gbcore/src/gb_save.c
 	$(CC) $(CFLAGS) -o $@ $^
-test: test_save
+test_xbox: test_xbox.c ../../components/pad/src/xbox_report.c
+	$(CC) $(CFLAGS) -I../../components/pad/include -o $@ $^
+test: test_save test_xbox
 	./test_save
+	./test_xbox
 clean:
-	rm -f gb_host test_save
+	rm -f gb_host test_save test_xbox

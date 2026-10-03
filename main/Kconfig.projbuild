@@ -12,4 +12,7 @@ menu "Game Boy"
     config GB_NO_PANEL
         bool "No panel attached (QEMU, tools/qemu.sh): skip the panel driver, a refresh takes 1 s"
         default n
+    config GB_PAD_BLE
+        bool "Bluetooth LE gamepad (Xbox Wireless Controller)"
+        default y
 endmenu

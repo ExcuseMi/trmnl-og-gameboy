@@ -1,6 +1,8 @@
 # 4 MB. rom: raw .gb file written by tools/load_rom.sh, memory-mapped by the app (64 KiB aligned), up to 1 MB.
 # save: battery RAM of the cart (header + up to 32 KB), see main/save_flash.c.
+# nvs: Bluetooth bond of the controller. Behind the others, so flashing the merged image at 0x0 keeps it.
 # Name, Type, SubType, Offset,   Size
 factory, app,  factory, 0x10000,  0x180000
 rom,     data, 0x40,    0x190000, 0x100000
 save,    data, 0x41,    0x290000, 0x10000
+nvs,     data, nvs,     0x2A0000, 0x6000
