@@ -50,6 +50,7 @@ static uint32_t rows[GB_ROWS];   /* hashes of the rows the panel shows (the cont
 static volatile int state = PANEL_BUSY;
 static volatile uint32_t n_emu, n_panel, partial_ms, data_ms, refresh_ms, pon_ms, pof_ms;
 static volatile int speed_want;  /* preset asked for (app_main from NVS, then the emulator task on RB / LB) */
+static volatile bool clean_want; /* Y on the gamepad: full refresh now */
 static volatile int speed_now;   /* preset the panel task runs */
 static int full_every = CONFIG_GB_FULL_EVERY;
 static int64_t last_push_us;
@@ -172,7 +173,8 @@ static void panel_task(void *arg)
         }
         tiny_rect_t r;
         /* controller RAM lost (a failed power off reset it): full refresh */
-        bool full = first || partials >= full_every || (!NO_PANEL && !epd_ram_valid());
+        bool full = first || clean_want || partials >= full_every || (!NO_PANEL && !epd_ram_valid());
+        clean_want = false;
         if (!full && !gb_fb_diff(rows, fb, &r)) continue;
         state = PANEL_BUSY;
         int rc = push(full, &r);
@@ -213,6 +215,7 @@ static void emu_task(void *arg)
         raw_prev = raw;
         if ((down & XBOX_RB) && speed_want < GB_SPEED_N - 1) speed_want = speed_want + 1;
         if ((down & XBOX_LB) && speed_want > 0) speed_want = speed_want - 1;
+        if (down & XBOX_Y) clean_want = true; /* full refresh on demand: clears the ghosting */
 #else
         (void)raw_prev;
 #endif

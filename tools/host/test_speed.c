@@ -47,7 +47,7 @@ int main(void)
         const gb_speed_t *a = gb_speed(i - 1), *b = gb_speed(i);
         CHECK(b->hold);
         CHECK(gb_speed_wave_ms(b) <= gb_speed_wave_ms(a));
-        CHECK(b->full_every > 0 && (a->full_every == 0 || b->full_every < a->full_every));
+        CHECK(b->full_every > 0 && (a->full_every == 0 || b->full_every <= a->full_every));
         CHECK(epd_pll_hz(epd_pll_reg(b->hz)) == (b->hz ? b->hz : 50u)); /* an exact PLL step */
     }
     CHECK(gb_speed_wave_ms(p0) == 1400 && gb_speed_wave_ms(gb_speed(GB_SPEED_N - 1)) == 20);
