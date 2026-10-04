@@ -8,7 +8,7 @@ controller over Bluetooth. Proof of concept: is it playable at e-ink frame rates
 | Emulator | Peanut-GB (MIT, `third_party/peanut_gb`), no sound, MBC1/2/3/5 |
 | Panel | OG driver from tiny-paper (GPL-3.0, `components/epd`, source in SOURCE.md) |
 | Picture | 160x144 at 3x (480x432), centred, 1 bit: Bayer 4x4 dither or plain threshold (`GB_SHADE_MODE`) |
-| Refresh | partial refresh of the changed rows, full refresh every 20 partials (`menuconfig` > Game Boy) |
+| Refresh | partial refresh of the changed rows, back to back; full refresh every 300 partials or fewer (panel speed below) |
 | Input | Xbox controller over Bluetooth LE; the OG button too: press = A, hold 1 s = Start |
 | Saves | battery RAM (up to 32 KB) in the `save` flash partition |
 | Save states | full snapshot of the emulator every 2 minutes (`GB_STATE_EVERY_S`, 0 = off), resumed at boot |
@@ -37,6 +37,25 @@ controller over Bluetooth. Proof of concept: is it playable at e-ink frame rates
 | A, B | A, B |
 | Menu (three lines) | Start |
 | View (two squares) | Select |
+| RB / LB | panel speed: next / previous preset. Shown as `speed N` for 2 s, kept across restarts |
+
+Panel speed presets (`main/gb_speed.c`). Faster ones drive each changed pixel shorter: paler, more ghosting, a full
+refresh more often. Step up until it no longer looks acceptable. The ms are estimates for a picture that changed
+completely (waveform + about 55 ms data at 4 MHz SPI + waiting for the next emulator frame); the log line has the
+measured split.
+
+| Preset | Waveform | Frames | Hz | Power between refreshes | Full every | Expected ms per picture |
+|---|---|---|---|---|---|---|
+| 0 (default) | GxEPD2 partial 30/5/30/5 | 70 | 50 | off (PON and POF every time) | 300 (`menuconfig`) | 1680 (measured) |
+| 1 | same | 70 | 50 | held | 200 | 1470 |
+| 2 | one phase, 1 bit | 20 | 50 | held | 120 | 470 |
+| 3 | one phase, 1 bit | 10 | 50 | held | 80 | 270 |
+| 4 | one phase, 1 bit | 6 | 100 | held | 60 | 130 |
+| 5 | one phase, 1 bit | 4 | 200 | held | 40 | 90 |
+
+Held power goes off after 2 s without a refresh and before every full refresh. Presets 1 to 5 are not tried on
+hardware yet: the one-phase waveform is not charge balanced per refresh and the frame rates above 50 Hz are from
+the UC8179 datasheet table. If a preset leaves the picture wrong, go back with LB; the next full refresh cleans up.
 
 | Where | What |
 |---|---|
@@ -76,7 +95,7 @@ The save belongs to the game that wrote it: before another game with battery RAM
 | Local page | `make build`, then `cd tools/web && python3 -m http.server`, open http://localhost:8000 (Chrome or Edge). `Flash firmware` takes the fresh build, or pick a file |
 | Firmware by hand | `python -m esptool --chip esp32c3 write_flash 0x0 build/dist/gameboy-merged.bin` |
 | ROM by hand | `tools/load_rom.sh game.gb [/dev/ttyACM0]`, which is `esptool.py --chip esp32c3 write_flash 0x190000 game.gb`. Test ROMs: `tools/fetch_roms.sh` |
-| Log (USB serial) | each second `gb fps_emu=.. fps_panel=.. partial_ms=.. full_every=.. heap_free=.. heap_min=..`; `pad scanning`, `pad link`, `pad connected`, `pad report buttons=0x..`, `pad disconnected`; `gb save=loaded/empty/written` |
+| Log (USB serial) | each second `gb fps_emu=.. fps_panel=.. partial_ms=.. preset=.. frames=.. hz=.. data_ms=.. refresh_ms=.. pon_ms=.. pof_ms=.. full_every=.. heap_free=.. heap_min=..` (last partial refresh: `data_ms` SPI, `refresh_ms` waveform, `pon_ms`/`pof_ms` power on/off, 0 = skipped); `gb speed=N ..` on a preset change; `pad scanning`, `pad link`, `pad connected`, `pad report buttons=0x..`, `pad disconnected`; `gb save=loaded/empty/written` |
 
 Without a valid ROM the firmware prints an error every 5 s. Flashing 0x0 does not touch ROM, save or bond.
 
