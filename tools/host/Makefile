@@ -16,10 +16,13 @@ test_xbox: test_xbox.c ../../components/pad/src/xbox_report.c
 	$(CC) $(CFLAGS) -I../../components/pad/include -o $@ $^
 test_state: test_state.c ../../components/gbcore/src/gb_state.c ../../components/gbcore/src/gb_core.c ../../components/gbcore/src/gb_render.c ../../components/gbcore/src/gb_save.c
 	$(CC) $(CFLAGS) -o $@ $^
-test: test_save test_xbox test_state
+test_speed: test_speed.c ../../components/epd/src/epd_lut.c ../../main/gb_speed.c
+	$(CC) $(CFLAGS) -I../../components/epd/include -I../../main -o $@ $^
+test: test_save test_xbox test_state test_speed
 	../fetch_roms.sh >/dev/null
 	./test_save
 	./test_state
 	./test_xbox
+	./test_speed
 clean:
-	rm -f gb_host gb_host_threshold test_save test_xbox test_state
+	rm -f gb_host gb_host_threshold test_save test_xbox test_state test_speed
