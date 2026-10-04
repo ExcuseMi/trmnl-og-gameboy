@@ -22,7 +22,7 @@ void gb_render_line(uint8_t *fb, const uint8_t *shades, unsigned ly);
 /* "bayer" or "threshold": what this build does. */
 const char *gb_shade_name(void);
 /* One text line above the game picture (rows GB_LINE_Y .., GB_LINE_H high, as wide as the picture), centred; NULL
- * clears it. Glyphs exist only for the letters of the pairing hint. out (may be NULL): the box to refresh. */
+ * clears it. Glyphs exist only for the letters of the pairing hint and of "speed 0" .. "speed 5". out (may be NULL): the box to refresh. */
 #define GB_LINE_Y 4   /* above the picture: the OG bezel covers the rows under it */
 #define GB_LINE_H 16
 void gb_fb_line(uint8_t *fb, const char *text, tiny_rect_t *out);

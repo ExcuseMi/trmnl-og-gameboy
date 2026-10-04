@@ -29,6 +29,7 @@ void ble_store_config_init(void);
 
 static uint8_t own_addr_type;
 static volatile uint8_t g_buttons;
+static volatile uint16_t g_raw; /* Xbox button word (xbox_report.h XBOX_*), for keys the Game Boy does not have */
 static volatile bool g_connected;
 static uint16_t hid_start, hid_end;
 static uint16_t cccd[MAX_CCCD];
@@ -368,6 +369,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
             evf("%s", line);
         }
         if (!ok) return 0;
+        g_raw = r.buttons;
         uint8_t b = xbox_to_gb(&r);
         if (b != g_buttons) {
             g_buttons = b;
@@ -378,6 +380,7 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         g_connected = false;
         g_buttons = 0;
+        g_raw = 0;
         g_disc = ev->disconnect.reason;
         evf("pad disconnected reason=%d\n", ev->disconnect.reason);
         scan_start();
@@ -475,6 +478,7 @@ void pad_init(void)
 }
 
 uint8_t pad_buttons(void) { return g_buttons; }
+uint16_t pad_raw_buttons(void) { return g_raw; }
 bool pad_connected(void) { return g_connected; }
 /* Called once a second for the status line. Also the scan watchdog: seen on hardware, the advert count stood still
  * in state "scan" after one gamepad advert (a connect attempt that never reported back), so after 5 s without an

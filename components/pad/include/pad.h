@@ -9,6 +9,8 @@
 void pad_init(void);
 /* Pressed buttons now (gb_input.h bits), 0 without a controller. */
 uint8_t pad_buttons(void);
+/* The controller's own button word (xbox_report.h XBOX_*), 0 without a controller. */
+uint16_t pad_raw_buttons(void);
 /* True while a controller sends reports. */
 bool pad_connected(void);
 /* For the status log line: where the pad code is ("off", "scan", "link", "pair", "setup", "on"), adverts seen,
