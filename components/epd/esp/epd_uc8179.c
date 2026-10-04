@@ -23,7 +23,7 @@ static const char *TAG = "epd";
 /* UC8179 commands */
 enum {
     C_PSR = 0x00, C_PWR = 0x01, C_POF = 0x02, C_PON = 0x04, C_BTST = 0x06, C_DSLP = 0x07,
-    C_DTM1 = 0x10, C_DRF = 0x12, C_DTM2 = 0x13, C_DUSPI = 0x15, C_LUTC = 0x20,
+    C_DTM1 = 0x10, C_DRF = 0x12, C_DTM2 = 0x13, C_DUSPI = 0x15, C_LUTC = 0x20, C_PLL = 0x30,
     C_VDCS = 0x82, C_TSE = 0x41, C_CDI = 0x50, C_TCON = 0x60, C_TRES = 0x61,
     C_PTL = 0x90, C_PTIN = 0x91, C_PTOU = 0x92, C_CCSET = 0xe0, C_PWS = 0xe3, C_TSSET = 0xe5,
 };
@@ -40,6 +40,9 @@ static struct {
     epd_cfg_t cfg;
     spi_device_handle_t dev;
     bool open, powered, asleep, ram_valid, begun;
+    bool part_ready;              /* registers hold the partial init of `tune` (hold_power skips it) */
+    epd_tune_t tune;
+    uint8_t pll;                  /* PLL register as last written (50 Hz after reset) */
     epd_mode_t mode;
     epd_rects_t wr;               /* written areas and their union (epd_rects.h) */
     epd_stats_t st;
@@ -131,6 +134,8 @@ static int hw_reset(void)
     s.asleep = false;
     s.ram_valid = false;
     s.begun = false;
+    s.part_ready = false;
+    s.pll = EPD_PLL_50HZ;
     return wait_busy(T_RESET_MS, &s.st.reset_ms, "reset");
 }
 
@@ -143,6 +148,29 @@ static int fail(int rc, const char *what)
     wait_busy(T_POF_MS, NULL, "POF (recovery)");
     s.powered = false;
     hw_reset();
+    return rc;
+}
+
+static int power_off(void)
+{
+    if (!s.powered) return EPD_OK;
+    int rc = cmd(C_POF);
+    if (rc) return fail(rc, "POF");
+    rc = wait_busy(T_POF_MS, &s.st.power_off_ms, "POF");
+    s.powered = false;
+    return rc ? fail(rc, "POF") : EPD_OK;
+}
+
+int epd_power_off(void) { return s.open ? power_off() : EPD_E_STATE; }
+bool epd_powered(void) { return s.powered; }
+
+int epd_set_tune(const epd_tune_t *t)
+{
+    if (!s.open || s.begun) return EPD_E_STATE;
+    if (t->frames == s.tune.frames && t->hz == s.tune.hz && t->hold_power == s.tune.hold_power) return EPD_OK;
+    int rc = power_off(); /* LUTs and PLL change with the pumps off */
+    s.tune = *t;
+    s.part_ready = false;
     return rc;
 }
 
@@ -266,12 +294,24 @@ int epd_begin(epd_mode_t mode)
     s.mode = mode;
     epd_rects_reset(&s.wr);
     s.st.bytes = 0;
+    if (mode == EPD_PARTIAL && s.powered && s.part_ready) { /* power held: the registers still stand */
+        s.begun = true;
+        return EPD_OK;
+    }
+    if ((rc = power_off())) return rc;             /* held power ends before any other init */
+    s.part_ready = false;
+    uint8_t pll = mode == EPD_PARTIAL ? epd_pll_reg(s.tune.hz) : EPD_PLL_50HZ;
+    if (pll != s.pll) {                            /* never sent while everything runs at the reset default */
+        if ((rc = cmdv(C_PLL, &pll, 1))) return fail(rc, "PLL");
+        s.pll = pll;
+    }
     if (mode == EPD_GRAY4) {
         s.ram_valid = false; /* the planes will hold gray data, not the last 1-bit frame */
         return begin_gray();
     }
-    bool lut = mode == EPD_PARTIAL && s.cfg.part_wave != EPD_PART_OTP;
-    bool gx = lut && s.cfg.part_wave == EPD_PART_GX;
+    bool fast = mode == EPD_PARTIAL && s.tune.frames;
+    bool lut = mode == EPD_PARTIAL && (fast || s.cfg.part_wave != EPD_PART_OTP);
+    bool gx = lut && (fast || s.cfg.part_wave == EPD_PART_GX);
 
     if (gx) CMD(C_PWR, 0x07, 0x07, 0x3f, 0x3f, 0x09);  /* GxEPD2 _InitDisplay: + VDHR 4.2 V */
     else CMD(C_PWR, 0x07, 0x07, 0x3f, 0x3f);       /* VGH/VGL 20 V, VDH/VDL 15 V */
@@ -297,7 +337,7 @@ int epd_begin(epd_mode_t mode)
         if (lut) {
             static uint8_t l[EPD_LUT_N][EPD_LUT_LEN];
             epd_lutset_t set = gx ? EPD_LUTSET_GX : EPD_LUTSET_BB;
-            unsigned k = epd_lut_build(set, s.cfg.lut_reps, l);
+            unsigned k = fast ? epd_lut_build_fast(s.tune.frames, l) : epd_lut_build(set, s.cfg.lut_reps, l);
             int vcom = epd_lut_vcom(set, s.cfg.lut_vcom);
             if (vcom >= 0) {
                 uint8_t v = (uint8_t)vcom;
@@ -305,7 +345,8 @@ int epd_begin(epd_mode_t mode)
             }
             for (int i = 0; i < EPD_LUT_N; i++)
                 if ((rc = cmdv(C_LUTC + i, l[i], EPD_LUT_LEN))) return fail(rc, "LUT");
-            ESP_LOGI(TAG, "LUT %s x%u: %u frames, vcom %d", gx ? "GX" : "BB", k, epd_lut_frames(l[3]), vcom);
+            ESP_LOGI(TAG, "LUT %s x%u: %u frames at %u Hz, vcom %d", fast ? "fast" : gx ? "GX" : "BB", k,
+                     epd_lut_frames(l[3]), epd_pll_hz(s.pll), vcom);
         } else {
             CMD(C_CCSET, 0x02);
             CMD(C_TSSET, 0x6e);                    /* forced 110: fast partial OTP waveform */
@@ -315,6 +356,7 @@ int epd_begin(epd_mode_t mode)
         return EPD_E_ARG;
     }
     s.begun = true;
+    s.part_ready = mode == EPD_PARTIAL;
     ESP_LOGI(TAG, "begin %s", mode == EPD_FULL ? "FULL" : mode == EPD_FULL_FAST ? "FULL_FAST" :
                               gx ? "PARTIAL (GX)" : lut ? "PARTIAL (LUT)" : "PARTIAL (OTP)");
     return EPD_OK;
@@ -408,9 +450,13 @@ int epd_refresh(void)
     if (s.mode != EPD_PARTIAL && !whole && !s.ram_valid)
         ESP_LOGW(TAG, "full refresh of a partly written RAM: unwritten areas show noise");
     int rc;
-    if ((rc = cmd(C_PON))) return fail(rc, "PON");
-    s.powered = true;
-    if ((rc = wait_busy(T_PON_MS, &s.st.power_on_ms, "PON"))) return fail(rc, "PON");
+    if (s.powered) {
+        s.st.power_on_ms = 0;                       /* held since the last partial refresh */
+    } else {
+        if ((rc = cmd(C_PON))) return fail(rc, "PON");
+        s.powered = true;
+        if ((rc = wait_busy(T_PON_MS, &s.st.power_on_ms, "PON"))) return fail(rc, "PON");
+    }
     uint32_t total_ms = 0;
     for (int i = 0; i < passes; i++) {
         if (windowed) {
@@ -427,10 +473,8 @@ int epd_refresh(void)
         if (windowed) cmd(C_PTOU);
     }
     s.st.refresh_ms = total_ms;
-    if ((rc = cmd(C_POF))) return fail(rc, "POF");
-    rc = wait_busy(T_POF_MS, &s.st.power_off_ms, "POF");
-    s.powered = false;
-    if (rc) return fail(rc, "POF");
+    if (s.mode == EPD_PARTIAL && s.tune.hold_power) s.st.power_off_ms = 0; /* the caller powers off when idle */
+    else if ((rc = power_off())) return rc;
     /* N2OCP copied NEW to OLD: RAM matches the screen if the whole panel was written (not in 4-gray) */
     if (whole && s.mode != EPD_GRAY4) s.ram_valid = true;
     s.begun = false;

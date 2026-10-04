@@ -36,6 +36,32 @@ unsigned epd_lut_build(epd_lutset_t set, unsigned reps, uint8_t out[EPD_LUT_N][E
     return k;
 }
 
+unsigned epd_lut_build_fast(unsigned frames, uint8_t out[EPD_LUT_N][EPD_LUT_LEN])
+{
+    /* LUTC, WW, KW (to white: VDL), WK (to black: VDH), KK, BD; phase A only */
+    static const uint8_t level[EPD_LUT_N] = {0x00, 0x00, 0x80, 0x40, 0x00, 0x00};
+    unsigned n = frames < 1 ? 1 : frames > 255 ? 255 : frames;
+    for (int i = 0; i < EPD_LUT_N; i++) {
+        memset(out[i], 0, EPD_LUT_LEN);
+        out[i][0] = level[i];
+        out[i][1] = (uint8_t)n;
+        out[i][5] = 1;
+    }
+    return n;
+}
+
+static const uint8_t PLL_HZ[EPD_PLL_MAX + 1] = {5, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 130, 150, 200};
+
+uint8_t epd_pll_reg(unsigned hz)
+{
+    if (hz == 0) return EPD_PLL_50HZ;
+    uint8_t r = 0;
+    while (r < EPD_PLL_MAX && PLL_HZ[r + 1] <= hz) r++;
+    return r;
+}
+
+unsigned epd_pll_hz(uint8_t reg) { return PLL_HZ[reg > EPD_PLL_MAX ? EPD_PLL_MAX : reg]; }
+
 int epd_lut_vcom(epd_lutset_t set, uint8_t setting)
 {
     if (setting == EPD_VCOM_AUTO)

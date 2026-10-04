@@ -7,7 +7,8 @@
  * EPD_GRAY4: 2 bits per pixel, 0 = black .. 3 = white, split into the DTM1/DTM2 planes (epd_gray.h).
  * Lifecycle, one refresh:
  *   epd_open -> epd_begin(mode) -> epd_write (1..n) -> epd_refresh -> [epd_begin ...] -> epd_sleep -> epd_close
- * epd_refresh always powers the charge pumps off (POF) when done, so the panel is never left driving.
+ * epd_refresh powers the charge pumps off (POF) when done, so the panel is not left driving. Only a partial refresh
+ * with epd_tune_t.hold_power leaves them on; the caller then calls epd_power_off when it stops refreshing.
  * Every BUSY wait has a timeout; on timeout the driver powers off and resets the controller.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -64,8 +65,16 @@ typedef struct {
     uint8_t gray_temp;     /* EPD_GRAY_OTP: forced temperature (TSSET), 0 = EPD_GRAY_TEMP_DEFAULT */
 } epd_cfg_t;
 
+/* Run-time tuning of the partial refresh, set between refreshes (epd_set_tune). All 0 = as epd_cfg_t says. */
 typedef struct {
-    uint32_t reset_ms, power_on_ms, refresh_ms, power_off_ms; /* last BUSY wait durations */
+    uint8_t frames;        /* 0 = waveform of cfg.part_wave; 1..255 = one-phase 1-bit LUT with this many drive frames
+                            * (epd_lut_build_fast) on the GX register set */
+    uint8_t hz;            /* frame rate of partial refreshes (PLL 0x30, epd_pll_reg), 0 = 50. Other modes run at 50 */
+    bool hold_power;       /* no POF after a partial refresh, no PON and no register init before the next one */
+} epd_tune_t;
+
+typedef struct {
+    uint32_t reset_ms, power_on_ms, refresh_ms, power_off_ms; /* last BUSY wait durations (0: step skipped) */
     uint32_t bytes;        /* data bytes sent since epd_begin */
     uint32_t timeouts;     /* since epd_open */
     int last_err;
@@ -91,6 +100,11 @@ int epd_fill(uint8_t old_byte, uint8_t new_byte);
  * the controller RAM outside the written areas is not known (after sleep/reset), only the union of
  * the areas written since epd_begin is refreshed. */
 int epd_refresh(void);
+/* New tuning for the following partial refreshes. Not between epd_begin and epd_refresh. Powers off if it changes. */
+int epd_set_tune(const epd_tune_t *t);
+/* POF if the charge pumps are on (hold_power), with the BUSY wait. */
+int epd_power_off(void);
+bool epd_powered(void);
 /* Power off (if on) and controller deep sleep (DSLP). The panel keeps its image; RAM is lost. */
 int epd_sleep(void);
 /* Sleep if needed, release SPI; CS and RST stay driven high. */

@@ -9,6 +9,10 @@
  * Group layout (6 bytes): levels (2 bits per phase A..D, A in bits 7:6; 00 GND, 01 VDH, 10 VDL, 11 VDHR),
  * frames A, B, C, D, repeat. "reps" multiplies every frame count of the group, so the ratio of the
  * phases (and with it the DC balance of the source table) stays as in the source.
+ * Unchanged pixels (WW, KK) and the border have level 00 in every table: source at GND while VCOM (LUTC, also 00)
+ * sits at VCOM DC, so they are not driven.
+ * Fast table (epd_lut_build_fast): one phase, KW = VDL, WK = VDH for n frames, nothing else. Not from a library.
+ * PLL (0x30) FRS[3:0], UC8179 datasheet: 5 10 15 20 30 40 50 (reset default, 0x06) 60 70 80 90 100 110 130 150 200 Hz.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later
  */
 #ifndef TINY_EPD_LUT_H
@@ -24,6 +28,9 @@
 #define EPD_VCOM_MIN 0x08     /* -0.50 V */
 #define EPD_VCOM_MAX 0x40     /* -3.30 V (VDCS: -0.10 V - 0.05 V per step) */
 
+#define EPD_PLL_50HZ 0x06     /* reset default */
+#define EPD_PLL_MAX 0x0f      /* 200 Hz */
+
 typedef enum { EPD_LUTSET_BB = 0, EPD_LUTSET_GX = 1 } epd_lutset_t;
 
 /* Clamp reps into [EPD_LUT_REPS_MIN, EPD_LUT_REPS_MAX]. */
@@ -31,6 +38,13 @@ unsigned epd_lut_reps_clamp(unsigned reps);
 /* Fill the six LUTs of `set` with every frame count times `reps` (clamped). A frame count that would
  * exceed 255 limits the factor for the whole table, so all phases keep their ratio. Returns the factor used. */
 unsigned epd_lut_build(epd_lutset_t set, unsigned reps, uint8_t out[EPD_LUT_N][EPD_LUT_LEN]);
+/* Fill the six LUTs with a one-phase 1-bit waveform ("A2 style"): black to white at VDL and white to black at VDH
+ * for `frames` frames (clamped to 1..255), unchanged pixels, border and VCOM at rest for the same time. Not charge
+ * balanced per refresh, only over a pixel's round trip. Returns the frames used. */
+unsigned epd_lut_build_fast(unsigned frames, uint8_t out[EPD_LUT_N][EPD_LUT_LEN]);
+/* PLL register value of the highest frame rate not above `hz` (0 = 50 Hz, below 5 = 5 Hz), and back to Hz. */
+uint8_t epd_pll_reg(unsigned hz);
+unsigned epd_pll_hz(uint8_t reg);
 /* VCOM DC register (0x82) value for `set` and the user setting (EPD_VCOM_AUTO or a value, clamped),
  * or -1 for "do not send". */
 int epd_lut_vcom(epd_lutset_t set, uint8_t setting);
