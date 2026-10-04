@@ -1,4 +1,4 @@
-/* Panel speed presets, stepped with RB / LB on the controller while playing. Hardware free (host test:
+/* Panel speed presets; the firmware runs GB_SPEED_DEFAULT, the others are kept for tuning. Hardware free (host test:
  * tools/host/test_speed.c). C11. SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef GB_SPEED_H
 #define GB_SPEED_H
@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #define GB_SPEED_N 6
+#define GB_SPEED_DEFAULT 3 /* chosen by eye on a real TRMNL OG */
 #define GB_SPEED_GX_FRAMES 70 /* the GxEPD2 partial waveform: 30 + 5 + 30 + 5 */
 
 typedef struct {

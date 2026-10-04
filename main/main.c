@@ -2,8 +2,8 @@
  * panel allows (back to back: the next refresh starts with the first frame the emulator draws after the last one, so
  * a button press waits for the running refresh only). Log line each second: gb fps_emu=.. fps_panel=.. partial_ms=..
  * preset=.. frames=.. hz=.. data_ms=.. refresh_ms=.. pon_ms=.. pof_ms=.. full_every=.. heap_free=.. heap_min=..
- * Without a connected gamepad a hint line stands above the picture. RB / LB on the gamepad step the panel speed
- * preset (gb_speed.h), kept in NVS ("gb" / "speed") and shown for 2 s in the same line.
+ * Without a connected gamepad a hint line stands above the picture. The panel runs speed preset GB_SPEED_DEFAULT
+ * (gb_speed.h); Y on the gamepad does a full refresh.
  * C11. SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +30,6 @@
 
 #define FRAME_US 16742 /* 1e6 / 59.7275 */
 #define IDLE_OFF_US 2000000 /* held panel power goes off after this long without a refresh */
-#define SPEED_MSG_US 2000000
 
 #ifdef CONFIG_GB_NO_PANEL
 #define NO_PANEL 1
@@ -49,7 +48,7 @@ static uint8_t fb[GB_FB_SIZE];   /* written by the emulator while FRAME_WANTED, 
 static uint32_t rows[GB_ROWS];   /* hashes of the rows the panel shows (the controller RAM holds the old plane) */
 static volatile int state = PANEL_BUSY;
 static volatile uint32_t n_emu, n_panel, partial_ms, data_ms, refresh_ms, pon_ms, pof_ms;
-static volatile int speed_want;  /* preset asked for (app_main from NVS, then the emulator task on RB / LB) */
+static volatile int speed_want;  /* preset the panel task starts with (GB_SPEED_DEFAULT) */
 static volatile bool clean_want; /* Y on the gamepad: full refresh now */
 static volatile int speed_now;   /* preset the panel task runs */
 static int full_every = CONFIG_GB_FULL_EVERY;
@@ -97,26 +96,6 @@ static void speed_apply(int n)
            sp->hz ? sp->hz : 50, sp->hold, full_every);
 }
 
-static int speed_load(void)
-{
-    nvs_handle_t h;
-    uint8_t v = 0;
-    nvs_flash_init(); /* pad_init does it again (and erases a damaged partition); without it the preset is 0 */
-    if (nvs_open("gb", NVS_READONLY, &h)) return 0;
-    if (nvs_get_u8(h, "speed", &v) || v >= GB_SPEED_N) v = 0;
-    nvs_close(h);
-    return v;
-}
-
-static void speed_store(int n)
-{
-    nvs_handle_t h;
-    if (nvs_open("gb", NVS_READWRITE, &h)) return;
-    nvs_set_u8(h, "speed", (uint8_t)n);
-    nvs_commit(h);
-    nvs_close(h);
-}
-
 /* Held power (presets 1..): off when nothing was refreshed for a while, so the panel is not left driving. */
 static void idle_power(void)
 {
@@ -145,16 +124,9 @@ static void panel_task(void *arg)
     speed_apply(speed_want);
     int partials = 0, line = 0; /* line: 0 none, 1 pairing hint, 2 + n "speed n" */
     bool first = true;
-    int64_t msg_until = 0;
     for (;;) {
-        int sw = speed_want;
-        if (sw != speed_now) { /* between two refreshes */
-            speed_apply(sw);
-            speed_store(sw);
-            msg_until = esp_timer_get_time() + SPEED_MSG_US;
-        }
         /* rows above the picture: the emulator never draws there, so this task may */
-        int want = esp_timer_get_time() < msg_until ? 2 + speed_now : PAD_BLE && !pad_connected() ? 1 : 0;
+        int want = PAD_BLE && !pad_connected() ? 1 : 0;
         if (want != line) {
             tiny_rect_t lr;
             char msg[] = "speed 0";
@@ -210,11 +182,9 @@ static void emu_task(void *arg)
     uint16_t raw_prev = 0;
     for (;;) {
 #ifdef CONFIG_GB_PAD_BLE
-        /* panel speed: RB next, LB previous, on the press only. Not Game Boy input, so not in gb_input */
+        /* on the press only. Not Game Boy input, so not in gb_input */
         uint16_t raw = pad_raw_buttons(), down = raw & (uint16_t)~raw_prev;
         raw_prev = raw;
-        if ((down & XBOX_RB) && speed_want < GB_SPEED_N - 1) speed_want = speed_want + 1;
-        if ((down & XBOX_LB) && speed_want > 0) speed_want = speed_want - 1;
         if (down & XBOX_Y) clean_want = true; /* full refresh on demand: clears the ghosting */
 #else
         (void)raw_prev;
@@ -294,7 +264,7 @@ void app_main(void)
     printf("gb rom='%s' shade=%s heap_free=%u\n", gb_core_title(), gb_shade_name(),
            (unsigned)esp_get_free_heap_size());
     gb_input_init();
-    speed_want = speed_load();
-    xTaskCreate(panel_task, "panel", 6144, NULL, 6, NULL); /* + the NVS write of a preset change */
+    speed_want = GB_SPEED_DEFAULT;
+    xTaskCreate(panel_task, "panel", 6144, NULL, 6, NULL);
     xTaskCreate(emu_task, "emu", 8192, NULL, 5, NULL);
 }
